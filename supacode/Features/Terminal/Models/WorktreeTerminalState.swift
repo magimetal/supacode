@@ -1306,6 +1306,9 @@ final class WorktreeTerminalState {
       guard let self, let view else { return false }
       return self.performSplitAction(action, for: view.id)
     }
+    view.bridge.onConvertToBrowser = { [weak self, surfaceID = view.id] in
+      self?.convertTerminalPaneToBrowser(surfaceID: surfaceID) ?? false
+    }
     view.bridge.onNewTab = { [weak self, weak view] in
       guard let self, let view else { return false }
       return self.createTab(inheritingFromSurfaceId: view.id) != nil

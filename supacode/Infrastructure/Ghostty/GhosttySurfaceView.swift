@@ -1179,6 +1179,15 @@ final class GhosttySurfaceView: NSView, Identifiable {
         symbol: "rectangle.tophalf.inset.filled"
       ))
     menu.addItem(.separator())
+    if bridge.onConvertToBrowser != nil {
+      menu.addItem(
+        menuItem(
+          title: "Convert Pane to Browser",
+          action: #selector(convertPaneToBrowser(_:)),
+          symbol: "globe"
+        ))
+      menu.addItem(.separator())
+    }
     menu.addItem(
       menuItem(
         title: "Reset Terminal",
@@ -1215,6 +1224,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   @IBAction func splitUp(_ sender: Any?) {
     _ = bridge.onSplitAction?(.newSplit(direction: .top))
+  }
+
+  @IBAction func convertPaneToBrowser(_ sender: Any?) {
+    _ = bridge.onConvertToBrowser?()
   }
 
   @IBAction func resetTerminal(_ sender: Any?) {

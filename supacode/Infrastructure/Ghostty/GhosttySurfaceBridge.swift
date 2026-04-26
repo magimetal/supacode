@@ -49,6 +49,7 @@ final class GhosttySurfaceBridge {
   weak var surfaceView: GhosttySurfaceView?
   var onTitleChange: ((String) -> Void)?
   var onSplitAction: ((GhosttySplitAction) -> Bool)?
+  var onConvertToBrowser: (() -> Bool)?
   var onCloseRequest: ((Bool) -> Void)?
   var onNewTab: (() -> Bool)?
   var onCloseTab: ((ghostty_action_close_tab_mode_e) -> Bool)?
