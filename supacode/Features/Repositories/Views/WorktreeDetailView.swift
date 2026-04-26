@@ -217,6 +217,7 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.revealInFinderAction, actions.revealInFinder)
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
       .focusedSceneValue(\.newTerminalAction, actions.newTerminal)
+      .focusedSceneValue(\.newBrowserTabAction, actions.newBrowserTab)
       .focusedValue(\.closeTabAction, actions.closeTab)
       .focusedValue(\.closeSurfaceAction, actions.closeSurface)
       .focusedSceneValue(\.startSearchAction, actions.startSearch)
@@ -239,6 +240,7 @@ struct WorktreeDetailView: View {
       openSelectedWorktree: action(.openSelectedWorktree),
       revealInFinder: action(.revealInFinder),
       newTerminal: action(.newTerminal),
+      newBrowserTab: action(.newBrowserTab),
       closeTab: action(.closeTab),
       closeSurface: action(.closeSurface),
       startSearch: action(.startSearch),
@@ -273,6 +275,7 @@ struct WorktreeDetailView: View {
     let openSelectedWorktree: (() -> Void)?
     let revealInFinder: (() -> Void)?
     let newTerminal: (() -> Void)?
+    let newBrowserTab: (() -> Void)?
     let closeTab: (() -> Void)?
     let closeSurface: (() -> Void)?
     let startSearch: (() -> Void)?

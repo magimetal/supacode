@@ -15,13 +15,12 @@ public struct AppearanceSettingsView: View {
       Section {
         LabeledContent("Appearance") {
           HStack(spacing: 12) {
-            let appearanceMode = $store.appearanceMode
             ForEach(AppearanceMode.allCases) { mode in
               AppearanceOptionCardView(
                 mode: mode,
-                isSelected: mode == appearanceMode.wrappedValue
+                isSelected: mode == store.appearanceMode
               ) {
-                appearanceMode.wrappedValue = mode
+                store.send(.setAppearanceMode(mode))
               }
             }
           }

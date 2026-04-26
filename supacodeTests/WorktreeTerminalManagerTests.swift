@@ -101,6 +101,21 @@ struct WorktreeTerminalManagerTests {
     #expect(state.socketPath == nil)
   }
 
+  @Test func browserTabsDoNotCreateTerminalTreesAndTerminalTabsStillDo() throws {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let state = manager.state(for: makeWorktree())
+
+    let browserTabId = try #require(state.createBrowserTab())
+    #expect(state.tabKind(browserTabId) == .browser)
+    #expect(state.browserSurface(for: browserTabId) != nil)
+    #expect(!state.debugHasTerminalTree(for: browserTabId))
+
+    let terminalTabId = try #require(state.createTab())
+    #expect(state.tabKind(terminalTabId) == .terminal)
+    #expect(state.debugHasTerminalTree(for: terminalTabId))
+    #expect(state.browserSurface(for: terminalTabId) == nil)
+  }
+
   @Test func socketBusyRoutesToDecodedWorktreeState() {
     let server = AgentHookSocketServer()
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(), socketServer: server)

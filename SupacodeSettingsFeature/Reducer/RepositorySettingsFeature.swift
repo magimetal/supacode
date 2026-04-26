@@ -73,6 +73,16 @@ public struct RepositorySettingsFeature {
       globalPullRequestMergeStrategy: PullRequestMergeStrategy
     )
     case branchDataLoaded([String], defaultBaseRef: String)
+    case setWorktreeBaseRef(String?)
+    case setWorktreeBaseDirectoryPath(String)
+    case setCopyIgnoredOnWorktreeCreate(Bool?)
+    case setCopyUntrackedOnWorktreeCreate(Bool?)
+    case setPullRequestMergeStrategy(PullRequestMergeStrategy?)
+    case setSetupScript(String)
+    case setArchiveScript(String)
+    case setDeleteScript(String)
+    case setScriptName(ScriptDefinition.ID, String)
+    case setScriptCommand(ScriptDefinition.ID, String)
     case addScript(ScriptKind)
     case removeScript(ScriptDefinition.ID)
     case alert(PresentationAction<Alert>)
@@ -191,6 +201,48 @@ public struct RepositorySettingsFeature {
         state.branchOptions = options
         state.isBranchDataLoaded = true
         return .none
+
+      case .setWorktreeBaseRef(let value):
+        state.settings.worktreeBaseRef = value
+        return persistAndNotify(state: &state)
+
+      case .setWorktreeBaseDirectoryPath(let value):
+        state.settings.worktreeBaseDirectoryPath = value
+        return persistAndNotify(state: &state)
+
+      case .setCopyIgnoredOnWorktreeCreate(let value):
+        state.settings.copyIgnoredOnWorktreeCreate = state.isBareRepository ? nil : value
+        return persistAndNotify(state: &state)
+
+      case .setCopyUntrackedOnWorktreeCreate(let value):
+        state.settings.copyUntrackedOnWorktreeCreate = state.isBareRepository ? nil : value
+        return persistAndNotify(state: &state)
+
+      case .setPullRequestMergeStrategy(let value):
+        state.settings.pullRequestMergeStrategy = value
+        return persistAndNotify(state: &state)
+
+      case .setSetupScript(let value):
+        state.settings.setupScript = value
+        return persistAndNotify(state: &state)
+
+      case .setArchiveScript(let value):
+        state.settings.archiveScript = value
+        return persistAndNotify(state: &state)
+
+      case .setDeleteScript(let value):
+        state.settings.deleteScript = value
+        return persistAndNotify(state: &state)
+
+      case .setScriptName(let id, let value):
+        guard let index = state.settings.scripts.firstIndex(where: { $0.id == id }) else { return .none }
+        state.settings.scripts[index].name = value
+        return persistAndNotify(state: &state)
+
+      case .setScriptCommand(let id, let value):
+        guard let index = state.settings.scripts.firstIndex(where: { $0.id == id }) else { return .none }
+        state.settings.scripts[index].command = value
+        return persistAndNotify(state: &state)
 
       case .addScript(let kind):
         // Predefined kinds are unique; reject duplicates.

@@ -73,6 +73,20 @@ struct TerminalTabManagerTests {
     #expect(tab?.icon == "play.fill")
   }
 
+  @Test func createTabDefaultsToTerminalKind() {
+    let manager = TerminalTabManager()
+    let tabId = manager.createTab(title: "one", icon: nil)
+    let tab = manager.tabs.first { $0.id == tabId }
+    #expect(tab?.kind == .terminal)
+  }
+
+  @Test func createTabStoresBrowserKind() {
+    let manager = TerminalTabManager()
+    let tabId = manager.createTab(title: "browser", icon: "globe", kind: .browser)
+    let tab = manager.tabs.first { $0.id == tabId }
+    #expect(tab?.kind == .browser)
+  }
+
   @Test func unlockAndUpdateTitleResetsTabToDefaults() {
     let manager = TerminalTabManager()
     let tabId = manager.createTab(

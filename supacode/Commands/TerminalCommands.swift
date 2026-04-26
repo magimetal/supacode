@@ -3,6 +3,7 @@ import SwiftUI
 struct TerminalCommands: Commands {
   let ghosttyShortcuts: GhosttyShortcutManager
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
+  @FocusedValue(\.newBrowserTabAction) private var newBrowserTabAction
   @FocusedValue(\.closeSurfaceAction) private var closeSurfaceAction
   @FocusedValue(\.closeTabAction) private var closeTabAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
@@ -19,6 +20,10 @@ struct TerminalCommands: Commands {
       }
       .modifier(KeyboardShortcutModifier(shortcut: ghosttyShortcuts.keyboardShortcut(for: "new_tab")))
       .disabled(newTerminalAction == nil)
+      Button("New Browser Tab", systemImage: "globe") {
+        newBrowserTabAction?()
+      }
+      .disabled(newBrowserTabAction == nil)
       Button("Close Terminal") {
         closeSurfaceAction?()
       }
@@ -92,6 +97,17 @@ extension FocusedValues {
   var newTerminalAction: (() -> Void)? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
+  }
+}
+
+private struct NewBrowserTabActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+extension FocusedValues {
+  var newBrowserTabAction: (() -> Void)? {
+    get { self[NewBrowserTabActionKey.self] }
+    set { self[NewBrowserTabActionKey.self] = newValue }
   }
 }
 

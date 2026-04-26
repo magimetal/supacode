@@ -15,6 +15,7 @@ final class TerminalTabManager {
     icon: String?,
     isTitleLocked: Bool = false,
     tintColor: TerminalTabTintColor? = nil,
+    kind: TerminalTabKind = .terminal,
     id: UUID? = nil
   ) -> TerminalTabID {
     let tabID: TerminalTabID
@@ -29,7 +30,14 @@ final class TerminalTabManager {
     } else {
       tabID = TerminalTabID()
     }
-    let tab = TerminalTabItem(id: tabID, title: title, icon: icon, isTitleLocked: isTitleLocked, tintColor: tintColor)
+    let tab = TerminalTabItem(
+      id: tabID,
+      title: title,
+      icon: icon,
+      isTitleLocked: isTitleLocked,
+      tintColor: tintColor,
+      kind: kind
+    )
     if let selectedTabId,
       let selectedIndex = tabs.firstIndex(where: { $0.id == selectedTabId })
     {

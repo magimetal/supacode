@@ -28,7 +28,7 @@ struct WorktreeTerminalTabsView: View {
           splitVertically: {
             _ = state.performBindingActionOnFocusedSurface("new_split:right")
           },
-          canSplit: state.tabManager.selectedTabId != nil,
+          canSplit: state.tabManager.selectedTabId.map { state.tabKind($0) == .terminal } ?? false,
           closeTab: { tabId in
             state.closeTab(tabId)
           },
@@ -49,17 +49,28 @@ struct WorktreeTerminalTabsView: View {
       }
       if let selectedId = state.tabManager.selectedTabId {
         TerminalTabContentStack(tabs: state.tabManager.tabs, selectedTabId: selectedId) { tabId in
-          TerminalSplitTreeAXContainer(
-            tree: state.splitTree(for: tabId),
-            activeSurfaceID: state.activeSurfaceID(for: tabId),
-            unfocusedSplitOverlay: unfocusedSplitOverlay,
-            hasNotification: { surfaceID in
-              state.hasUnseenNotification(forSurfaceID: surfaceID)
-            },
-            action: { operation in
-              state.performSplitOperation(operation, in: tabId)
+          switch state.tabKind(tabId) {
+          case .browser:
+            if let browserSurface = state.browserSurface(for: tabId) {
+              BrowserTabView(surface: browserSurface)
+            } else {
+              Text("Browser unavailable")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-          )
+          case .terminal, nil:
+            TerminalSplitTreeAXContainer(
+              tree: state.splitTree(for: tabId),
+              activeSurfaceID: state.activeSurfaceID(for: tabId),
+              unfocusedSplitOverlay: unfocusedSplitOverlay,
+              hasNotification: { surfaceID in
+                state.hasUnseenNotification(forSurfaceID: surfaceID)
+              },
+              action: { operation in
+                state.performSplitOperation(operation, in: tabId)
+              }
+            )
+          }
         }
       } else {
         EmptyTerminalPaneView(message: "No terminals open")

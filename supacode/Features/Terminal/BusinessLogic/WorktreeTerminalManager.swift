@@ -119,6 +119,8 @@ final class WorktreeTerminalManager {
       Task {
         createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, initialInput: input, tabID: id)
       }
+    case .createBrowserTab(let worktree, let initialURL):
+      _ = state(for: worktree).createBrowserTab(initialURL: initialURL)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       let state = state(for: worktree) { runSetupScriptIfNew }
       state.ensureInitialTab(focusing: focusing)
@@ -190,7 +192,7 @@ final class WorktreeTerminalManager {
       state(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch(let worktree):
       state(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface, .prune,
       .setNotificationsEnabled, .setSelectedWorktreeID, .refreshTabBarVisibility:
@@ -203,7 +205,7 @@ final class WorktreeTerminalManager {
     switch command {
     case .performBindingAction(let worktree, let action):
       state(for: worktree).performBindingActionOnFocusedSurface(action)
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .prune, .setNotificationsEnabled,
@@ -231,7 +233,7 @@ final class WorktreeTerminalManager {
       }
       selectedWorktreeID = id
       terminalLogger.info("Selected worktree \(id ?? "nil")")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .startSearch, .searchSelection, .navigateSearchNext, .navigateSearchPrevious, .endSearch,
       .selectTab, .focusSurface, .splitSurface, .destroyTab, .destroySurface:

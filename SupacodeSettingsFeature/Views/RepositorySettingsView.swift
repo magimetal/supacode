@@ -12,16 +12,31 @@ public struct RepositorySettingsView: View {
   public var body: some View {
     let baseRefOptions =
       store.branchOptions.isEmpty ? [store.defaultWorktreeBaseRef] : store.branchOptions
-    let settings = $store.settings
-    let worktreeBaseDirectoryPath = Binding(
-      get: { settings.worktreeBaseDirectoryPath.wrappedValue ?? "" },
-      set: { settings.worktreeBaseDirectoryPath.wrappedValue = $0 },
+    let worktreeBaseRef = Binding<String?>(
+      get: { store.settings.worktreeBaseRef },
+      set: { store.send(.setWorktreeBaseRef($0)) }
+    )
+    let copyIgnoredOnWorktreeCreate = Binding<Bool?>(
+      get: { store.settings.copyIgnoredOnWorktreeCreate },
+      set: { store.send(.setCopyIgnoredOnWorktreeCreate($0)) }
+    )
+    let copyUntrackedOnWorktreeCreate = Binding<Bool?>(
+      get: { store.settings.copyUntrackedOnWorktreeCreate },
+      set: { store.send(.setCopyUntrackedOnWorktreeCreate($0)) }
+    )
+    let worktreeBaseDirectoryPath = Binding<String>(
+      get: { store.settings.worktreeBaseDirectoryPath ?? "" },
+      set: { store.send(.setWorktreeBaseDirectoryPath($0)) }
+    )
+    let pullRequestMergeStrategy = Binding<PullRequestMergeStrategy?>(
+      get: { store.settings.pullRequestMergeStrategy },
+      set: { store.send(.setPullRequestMergeStrategy($0)) }
     )
     let exampleWorktreePath = store.exampleWorktreePath
     Form {
       Section {
         if store.isBranchDataLoaded {
-          Picker(selection: $store.settings.worktreeBaseRef) {
+          Picker(selection: worktreeBaseRef) {
             Text("Auto \(Text(store.defaultWorktreeBaseRef).foregroundStyle(.secondary))")
               .tag(String?.none)
             ForEach(baseRefOptions, id: \.self) { ref in
@@ -42,7 +57,7 @@ public struct RepositorySettingsView: View {
         }
       }
       Section {
-        Picker(selection: settings.copyIgnoredOnWorktreeCreate) {
+        Picker(selection: copyIgnoredOnWorktreeCreate) {
           Text("Global \(Text(store.globalCopyIgnoredOnWorktreeCreate ? "Yes" : "No").foregroundStyle(.secondary))")
             .tag(Bool?.none)
           Text("Yes").tag(Bool?.some(true))
@@ -52,7 +67,7 @@ public struct RepositorySettingsView: View {
           Text("Copies gitignored files from the main worktree.")
         }
         .disabled(store.isBareRepository)
-        Picker(selection: settings.copyUntrackedOnWorktreeCreate) {
+        Picker(selection: copyUntrackedOnWorktreeCreate) {
           Text("Global \(Text(store.globalCopyUntrackedOnWorktreeCreate ? "Yes" : "No").foregroundStyle(.secondary))")
             .tag(Bool?.none)
           Text("Yes").tag(Bool?.some(true))
@@ -86,7 +101,7 @@ public struct RepositorySettingsView: View {
         Text("e.g., `\(exampleWorktreePath)`")
       }
       Section("Pull Requests") {
-        Picker(selection: settings.pullRequestMergeStrategy) {
+        Picker(selection: pullRequestMergeStrategy) {
           Text("Global \(Text(store.globalPullRequestMergeStrategy.title).foregroundStyle(.secondary))")
             .tag(PullRequestMergeStrategy?.none)
           ForEach(PullRequestMergeStrategy.allCases) { strategy in

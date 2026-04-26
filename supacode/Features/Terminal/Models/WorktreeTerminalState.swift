@@ -27,6 +27,7 @@ final class WorktreeTerminalState {
   @SharedReader private var repositorySettings: RepositorySettings
   private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
+  private var browserSurfaces: [TerminalTabID: BrowserSurfaceState] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
   private var tabIsRunningById: [TerminalTabID: Bool] = [:]
   var socketPath: String?
@@ -352,6 +353,49 @@ final class WorktreeTerminalState {
     tabManager.tabs.contains(where: { $0.id == tabId })
   }
 
+  @discardableResult
+  func createBrowserTab(initialURL: URL? = nil, focusing _: Bool = true) -> TerminalTabID? {
+    let tabId = tabManager.createTab(
+      title: "New Browser",
+      icon: "globe",
+      isTitleLocked: false,
+      kind: .browser
+    )
+    let surface = BrowserSurfaceState()
+    surface.onDisplayTitleChange = { [weak self] title in
+      self?.tabManager.updateTitle(tabId, title: title)
+    }
+    browserSurfaces[tabId] = surface
+    if let initialURL {
+      surface.load(initialURL)
+    }
+    updateShouldHideTabBar()
+    onTabCreated?()
+    return tabId
+  }
+
+  func browserSurface(for tabId: TerminalTabID) -> BrowserSurfaceState? {
+    browserSurfaces[tabId]
+  }
+
+  func isBrowserTab(_ tabId: TerminalTabID) -> Bool {
+    tabManager.tabs.first { $0.id == tabId }?.kind == .browser
+  }
+
+  func tabKind(_ tabId: TerminalTabID) -> TerminalTabKind? {
+    tabManager.tabs.first { $0.id == tabId }?.kind
+  }
+
+  #if DEBUG
+    func debugHasTerminalTree(for tabId: TerminalTabID) -> Bool {
+      trees[tabId] != nil
+    }
+
+    func debugHasBrowserSurface(for tabId: TerminalTabID) -> Bool {
+      browserSurfaces[tabId] != nil
+    }
+  #endif
+
   func hasSurface(_ surfaceId: UUID, in tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
     return tree.find(id: surfaceId) != nil
@@ -516,13 +560,18 @@ final class WorktreeTerminalState {
   }
 
   func closeTab(_ tabId: TerminalTabID) {
+    let isBrowser = isBrowserTab(tabId)
     let closedBlockingKind = blockingScripts.removeValue(forKey: tabId)
     cleanupBlockingScriptLaunchDirectory(for: tabId)
     // Clear lingering tab tracking for completed or non-blocking tabs.
     for (kind, tracked) in lastBlockingScriptTabByKind where tracked == tabId {
       lastBlockingScriptTabByKind.removeValue(forKey: kind)
     }
-    removeTree(for: tabId)
+    if isBrowser {
+      browserSurfaces.removeValue(forKey: tabId)
+    } else {
+      removeTree(for: tabId)
+    }
     tabManager.closeTab(tabId)
     updateShouldHideTabBar()
     if let selected = tabManager.selectedTabId {
@@ -721,6 +770,7 @@ final class WorktreeTerminalState {
     cleanupBlockingScriptLaunchDirectories()
     surfaces.removeAll()
     trees.removeAll()
+    browserSurfaces.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
@@ -789,6 +839,10 @@ final class WorktreeTerminalState {
     guard !tabManager.tabs.isEmpty else { return nil }
     var tabSnapshots: [TerminalLayoutSnapshot.TabSnapshot] = []
     for tab in tabManager.tabs {
+      guard tab.kind == .terminal else {
+        layoutLogger.warning("Skipping browser tab \(tab.id.rawValue) during snapshot capture")
+        continue
+      }
       guard let tree = trees[tab.id], let root = tree.root else {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
@@ -1239,6 +1293,7 @@ final class WorktreeTerminalState {
   }
 
   private func focusSurface(in tabId: TerminalTabID) {
+    guard !isBrowserTab(tabId) else { return }
     if let focusedId = focusedSurfaceIdByTab[tabId], let surface = surfaces[focusedId] {
       focusSurface(surface, in: tabId)
       return

@@ -124,6 +124,7 @@ public struct SettingsFeature {
     case settingsLoaded(GlobalSettings)
     case repositoriesChanged([SettingsRepositorySummary])
     case setSelection(SettingsSection?)
+    case setAppearanceMode(AppearanceMode)
     case setSystemNotificationsEnabled(Bool)
     case setAutomatedActionPolicy(AutomatedActionPolicy)
     case showNotificationPermissionAlert(errorMessage: String?)
@@ -269,6 +270,11 @@ public struct SettingsFeature {
         return .send(.delegate(.settingsChanged(normalizedSettings)))
 
       case .binding:
+        state.syncGlobalDefaults(from: state.globalSettings)
+        return persist(state)
+
+      case .setAppearanceMode(let appearanceMode):
+        state.appearanceMode = appearanceMode
         state.syncGlobalDefaults(from: state.globalSettings)
         return persist(state)
 

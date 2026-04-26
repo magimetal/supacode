@@ -19,7 +19,10 @@ public struct RepositoryScriptsSettingsView: View {
       // pipeline.
       if store.isGitRepository {
         LifecycleScriptSection(
-          text: $store.settings.setupScript,
+          text: Binding(
+            get: { store.settings.setupScript },
+            set: { store.send(.setSetupScript($0)) }
+          ),
           title: "Setup Script",
           subtitle: "Runs once after worktree creation.",
           icon: "truck.box.badge.clock",
@@ -27,7 +30,10 @@ public struct RepositoryScriptsSettingsView: View {
           footerExample: "pnpm install"
         )
         LifecycleScriptSection(
-          text: $store.settings.archiveScript,
+          text: Binding(
+            get: { store.settings.archiveScript },
+            set: { store.send(.setArchiveScript($0)) }
+          ),
           title: "Archive Script",
           subtitle: "Runs before a worktree is archived.",
           icon: "archivebox",
@@ -36,7 +42,10 @@ public struct RepositoryScriptsSettingsView: View {
         )
       }
       LifecycleScriptSection(
-        text: $store.settings.deleteScript,
+        text: Binding(
+          get: { store.settings.deleteScript },
+          set: { store.send(.setDeleteScript($0)) }
+        ),
         title: "Delete Script",
         subtitle: store.isGitRepository
           ? "Runs before a worktree is deleted."
@@ -47,12 +56,24 @@ public struct RepositoryScriptsSettingsView: View {
       )
 
       // User-defined scripts, each in its own section.
-      ForEach($store.settings.scripts) { $script in
+      ForEach(store.settings.scripts) { script in
+        let scriptName = Binding(
+          get: {
+            store.settings.scripts.first(where: { $0.id == script.id })?.name ?? script.name
+          },
+          set: { store.send(.setScriptName(script.id, $0)) }
+        )
+        let scriptCommand = Binding(
+          get: {
+            store.settings.scripts.first(where: { $0.id == script.id })?.command ?? script.command
+          },
+          set: { store.send(.setScriptCommand(script.id, $0)) }
+        )
         Section {
           if script.kind == .custom {
-            TextField("Name", text: $script.name)
+            TextField("Name", text: scriptName)
           }
-          ScriptCommandEditor(text: $script.command, label: script.displayName)
+          ScriptCommandEditor(text: scriptCommand, label: script.displayName)
           Button("Remove Script…", role: .destructive) {
             store.send(.removeScript(script.id))
           }

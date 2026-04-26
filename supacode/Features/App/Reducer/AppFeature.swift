@@ -76,6 +76,7 @@ struct AppFeature {
     case openWorktreeFailed(OpenActionError)
     case requestQuit
     case newTerminal
+    case newBrowserTab
     case jumpToLatestUnread
     case runScript
     case runNamedScript(ScriptDefinition)
@@ -438,6 +439,15 @@ struct AppFeature {
         let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .newBrowserTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          return .none
+        }
+        analyticsClient.capture("browser_tab_created", nil)
+        return .run { _ in
+          await terminalClient.send(.createBrowserTab(worktree, initialURL: nil))
         }
 
       case .jumpToLatestUnread:
