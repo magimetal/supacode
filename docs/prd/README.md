@@ -81,4 +81,4 @@ Reference PRD IDs in changelog entries for feature work:
 | PRD  | Title                 | Status | Date       |
 | ---- | --------------------- | ------ | ---------- |
 | 0000 | Template              | Active | 2026-04-26 |
-| 0001 | Embedded Browser Tabs | Draft  | 2026-04-26 |
+| 0001 | Embedded Browser Tabs | Completed | 2026-04-26 |

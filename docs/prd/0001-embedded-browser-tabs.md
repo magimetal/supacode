@@ -1,9 +1,9 @@
 # PRD-0001: Embedded Browser Tabs
 
-- **Status:** Active
+- **Status:** Completed
 - **Date:** 2026-04-26
 - **Author:** Magi Metal
-- **Related:** [Implementation plan](../plans/embedded-browser-tabs.md)
+- **Related:** [Implementation plan](../plans/embedded-browser-tabs.md), [ADR-0001](../adr/0001-embedded-browser-tabs-with-webkit-surface-model.md)
 - **Supersedes:** N/A
 
 ## Problem Statement
@@ -48,18 +48,24 @@ Embedded browser tabs solve this by adding a browser tab type inside the existin
 
 ## Acceptance Criteria
 
-- [ ] A user can create a browser tab from an app command/menu action while a worktree is active.
-- [ ] The browser tab appears in the existing worktree tab bar with a browser-appropriate icon and an initial `New Browser` title.
-- [ ] Selecting a browser tab renders browser chrome and a web surface instead of a terminal split surface.
-- [ ] Typing a URL or domain-like value in the URL field loads the intended page.
-- [ ] Back, forward, and reload/stop controls update enabled/loading state according to the active page.
-- [ ] The tab title updates from page title when available, otherwise from host/URL, without breaking terminal title behavior.
-- [ ] Closing a browser tab uses the existing tab close flow and selects the next appropriate tab.
-- [ ] Creating, selecting, and closing terminal tabs continues to behave as before.
-- [ ] Browser tab creation does not create an unintended terminal surface or split tree for that browser tab.
-- [ ] Legacy terminal-only layout snapshots still restore successfully.
-- [ ] Browser tabs are not required to persist or restore across app launches in the first implementation pass.
-- [ ] Browser commands do not steal expected text input behavior from the URL field.
+- [x] A user can create a browser tab from an app command/menu action while a worktree is active.
+- [x] The browser tab appears in the existing worktree tab bar with a browser-appropriate icon and an initial `New Browser` title.
+- [x] Selecting a browser tab renders browser chrome and a web surface instead of a terminal split surface.
+- [x] Typing a URL or domain-like value in the URL field loads the intended page.
+- [x] Back, forward, and reload/stop controls update enabled/loading state according to the active page.
+- [x] The tab title updates from page title when available, otherwise from host/URL, without breaking terminal title behavior.
+- [x] Closing a browser tab uses the existing tab close flow and selects the next appropriate tab.
+- [x] Creating, selecting, and closing terminal tabs continues to behave as before.
+- [x] Browser tab creation does not create an unintended terminal surface or split tree for that browser tab.
+- [x] Legacy terminal-only layout snapshots still restore successfully.
+- [x] Browser tabs are not required to persist or restore across app launches in the first implementation pass.
+- [x] Browser commands do not steal expected text input behavior from the URL field.
+
+## Completion Evidence
+
+- Completed in commit `936d7c2dc8d1440b63f21d53fa01c7a553825d33` on `main`.
+- Verification passed: `make build-app`, `make test`, `make lint`.
+- Delivered browser MVP scope: top-level `WKWebView` browser tabs in the worktree tab area; no browser persistence; no mixed terminal/browser splits.
 
 ## Technical Surface
 
@@ -70,7 +76,7 @@ Embedded browser tabs solve this by adding a browser tab type inside the existin
 - **Rendering:** `supacode/Features/Terminal/Views/WorktreeTerminalTabsView.swift` and related tab content views need a selected-tab branch for browser content.
 - **Commands/focused actions:** App command routing through `supacode/Clients/Terminal/TerminalClient.swift`, `WorktreeTerminalManager.swift`, `AppFeature.swift`, `TerminalCommands.swift` or a browser command file, and `WorktreeDetailView.swift` needs a create-browser-tab path.
 - **Persistence:** First-pass implementation should preserve legacy terminal snapshot compatibility only. Browser tab URL/title persistence and mixed terminal/browser restore behavior are deferred follow-up scope.
-- **Related ADRs:** None currently. Add an ADR link here if implementation introduces a significant architecture decision.
+- **Related ADRs:** [ADR-0001: Embedded Browser Tabs with WebKit Surface Model](../adr/0001-embedded-browser-tabs-with-webkit-surface-model.md).
 
 ## UX Notes
 
@@ -94,3 +100,4 @@ Embedded browser tabs solve this by adding a browser tab type inside the existin
 - 2026-04-26: Draft created from `docs/plans/embedded-browser-tabs.md`.
 - 2026-04-26: Clarified first-pass scope defers browser tab persistence/restore while retaining legacy terminal snapshot restore acceptance.
 - 2026-04-26: Marked Active before implementation begins.
+- 2026-04-26: Marked Completed after browser MVP delivery in commit `936d7c2dc8d1440b63f21d53fa01c7a553825d33`; verification passed with `make build-app`, `make test`, and `make lint`.
