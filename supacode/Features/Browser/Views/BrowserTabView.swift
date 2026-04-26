@@ -4,6 +4,7 @@ struct BrowserTabView: View {
   @Bindable var surface: BrowserSurfaceState
   var onFocusRequest: (() -> Void)?
   @State private var addressText = ""
+  @FocusState private var isAddressFieldFocused: Bool
 
   init(surface: BrowserSurfaceState, onFocusRequest: (() -> Void)? = nil) {
     self.surface = surface
@@ -64,6 +65,12 @@ struct BrowserTabView: View {
 
       TextField("Search or enter website name", text: $addressText)
         .textFieldStyle(.roundedBorder)
+        .focused($isAddressFieldFocused)
+        .onChange(of: isAddressFieldFocused) { _, isFocused in
+          if isFocused {
+            onFocusRequest?()
+          }
+        }
         .onSubmit {
           onFocusRequest?()
           surface.navigateSmart(addressText)

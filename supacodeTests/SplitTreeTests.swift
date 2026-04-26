@@ -121,6 +121,40 @@ struct SplitTreeTests {
     #expect(emissions == [first.id])
   }
 
+  @Test func convertingFocusedTerminalPaneKeepsPaneActiveAsBrowser() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let second = try #require(fixture.second)
+    let state = fixture.state
+    let tabId = fixture.tabId
+
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+    #expect(state.convertTerminalPaneToBrowser(surfaceID: second.id))
+
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+    #expect(!state.hasSurface(second.id, in: tabId))
+    #expect(state.browserPaneSurface(for: second.id) != nil)
+    #expect(!state.canSplitActivePane(in: tabId))
+  }
+
+  @Test func closingConvertedBrowserPaneCleansItUpAndFocusesSiblingTerminal() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+    let second = try #require(fixture.second)
+    let state = fixture.state
+    let tabId = fixture.tabId
+
+    #expect(state.convertTerminalPaneToBrowser(surfaceID: second.id))
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+    #expect(state.closeSurface(id: second.id))
+
+    let leaves = state.splitTree(for: tabId).leaves()
+    #expect(leaves.count == 1)
+    #expect(leaves.first?.terminalSurface === first)
+    #expect(state.browserPaneSurface(for: second.id) == nil)
+    #expect(state.activeSurfaceID(for: tabId) == first.id)
+    #expect(state.canSplitActivePane(in: tabId))
+  }
+
   @Test func gotoSplitClearsZoomWhenNotConfigured() throws {
     let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
     let first = fixture.first

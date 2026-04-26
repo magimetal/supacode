@@ -67,4 +67,5 @@ Maintain in `docs/adr/README.md`:
 | ADR  | Title                                      | Status   | Date       |
 | ---- | ------------------------------------------ | -------- | ---------- |
 | 0000 | Template                                   | Accepted | 2026-04-26 |
-| 0001 | Embedded Browser Tabs with WebKit Surface Model | Accepted | 2026-04-26 |
+| 0001 | Embedded Browser Tabs with WebKit Surface Model | Superseded by ADR-0002 | 2026-04-26 |
+| 0002 | Browser Panes in Mixed Split Layouts | Accepted | 2026-04-26 |

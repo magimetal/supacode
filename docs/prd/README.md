@@ -82,3 +82,4 @@ Reference PRD IDs in changelog entries for feature work:
 | ---- | --------------------- | ------ | ---------- |
 | 0000 | Template              | Active | 2026-04-26 |
 | 0001 | Embedded Browser Tabs | Completed | 2026-04-26 |
+| 0002 | Browser Pane Conversion | Active | 2026-04-26 |

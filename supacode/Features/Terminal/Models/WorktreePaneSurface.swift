@@ -36,11 +36,10 @@ final class WorktreePaneSurface: NSView, Identifiable {
   }
 
   var bridge: GhosttySurfaceBridge {
-    terminalSurface!.bridge
-  }
-
-  func closeSurface() {
-    terminalSurface?.closeSurface()
+    guard let terminalSurface else {
+      preconditionFailure("Browser panes do not own Ghostty surface bridges")
+    }
+    return terminalSurface.bridge
   }
 }
 

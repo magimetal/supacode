@@ -60,40 +60,40 @@ final class BrowserSurfaceState: Identifiable {
 
   private func observeWebView() {
     observations = [
-      webView.observe(\.url, options: [.initial, .new]) { [weak self] webView, _ in
-        let url = webView.url
+      webView.observe(\.url, options: [.initial, .new]) { [weak self] _, change in
+        let url = change.newValue.flatMap { $0 }
         Task { @MainActor [weak self] in
           self?.currentURL = url
           self?.emitDisplayTitleChange()
         }
       },
-      webView.observe(\.title, options: [.initial, .new]) { [weak self] webView, _ in
-        let title = webView.title ?? ""
+      webView.observe(\.title, options: [.initial, .new]) { [weak self] _, change in
+        let title = change.newValue.flatMap { $0 } ?? ""
         Task { @MainActor [weak self] in
           self?.pageTitle = title
           self?.emitDisplayTitleChange()
         }
       },
-      webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] webView, _ in
-        let isLoading = webView.isLoading
+      webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] _, change in
+        let isLoading = change.newValue ?? false
         Task { @MainActor [weak self] in
           self?.isLoading = isLoading
         }
       },
-      webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] webView, _ in
-        let estimatedProgress = webView.estimatedProgress
+      webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] _, change in
+        let estimatedProgress = change.newValue ?? 0
         Task { @MainActor [weak self] in
           self?.estimatedProgress = estimatedProgress
         }
       },
-      webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] webView, _ in
-        let canGoBack = webView.canGoBack
+      webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] _, change in
+        let canGoBack = change.newValue ?? false
         Task { @MainActor [weak self] in
           self?.canGoBack = canGoBack
         }
       },
-      webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] webView, _ in
-        let canGoForward = webView.canGoForward
+      webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] _, change in
+        let canGoForward = change.newValue ?? false
         Task { @MainActor [weak self] in
           self?.canGoForward = canGoForward
         }

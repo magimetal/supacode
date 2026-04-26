@@ -1,6 +1,6 @@
 # ADR-0001: Embedded Browser Tabs with WebKit Surface Model
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0002
 - **Date:** 2026-04-26
 - **Decision Maker:** Magi Metal
 - **Related:** [Embedded Browser Tabs Feasibility and Implementation Plan](../plans/embedded-browser-tabs.md)
@@ -93,3 +93,4 @@ Rationale: Browser tabs should be introduced as a new tab content kind using Web
 ## Status History
 
 - 2026-04-26: Accepted
+- 2026-04-26: Superseded by ADR-0002 because mixed terminal/browser split panes materially replace the top-level-browser-tabs-only decision.
