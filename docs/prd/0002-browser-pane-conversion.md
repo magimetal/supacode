@@ -1,6 +1,6 @@
 # PRD-0002: Browser Pane Conversion
 
-- **Status:** Active
+- **Status:** Completed
 - **Date:** 2026-04-26
 - **Author:** Magi Metal
 - **Related:** [PRD-0001](./0001-embedded-browser-tabs.md), [ADR-0001](../adr/0001-embedded-browser-tabs-with-webkit-surface-model.md), [ADR-0002](../adr/0002-browser-panes-in-mixed-split-layouts.md)
@@ -42,16 +42,23 @@ Browser pane conversion solves this by letting a user right-click an active term
 
 ## Acceptance Criteria
 
-- [ ] Right-clicking a terminal pane exposes a clearly labeled action to convert that pane to a browser pane.
-- [ ] Invoking the action replaces the right-clicked terminal pane with an embedded browser pane in the same split position.
-- [ ] Existing sibling terminal panes remain visible and usable after conversion.
-- [ ] A mixed split layout can show at least one terminal pane and one browser pane side-by-side within the same top-level tab.
-- [ ] The converted browser pane supports MVP browser loading and navigation behavior consistent with PRD-0001 where applicable.
-- [ ] Converting one pane does not create an unintended top-level browser tab.
-- [ ] Converting one pane does not create an unintended new terminal surface for the browser pane.
-- [ ] Terminal-only tabs, terminal split creation, terminal focus, and terminal input behavior continue to work as before.
-- [ ] The context menu action is unavailable, hidden, or safely disabled where conversion is not valid.
-- [ ] Browser pane conversion does not require browser pane persistence/restore in the MVP.
+- [x] Right-clicking a terminal pane exposes a clearly labeled action to convert that pane to a browser pane.
+- [x] Invoking the action replaces the right-clicked terminal pane with an embedded browser pane in the same split position.
+- [x] Existing sibling terminal panes remain visible and usable after conversion.
+- [x] A mixed split layout can show at least one terminal pane and one browser pane side-by-side within the same top-level tab.
+- [x] The converted browser pane supports MVP browser loading and navigation behavior consistent with PRD-0001 where applicable.
+- [x] Converting one pane does not create an unintended top-level browser tab.
+- [x] Converting one pane does not create an unintended new terminal surface for the browser pane.
+- [x] Terminal-only tabs, terminal split creation, terminal focus, and terminal input behavior continue to work as before.
+- [x] The context menu action is unavailable, hidden, or safely disabled where conversion is not valid.
+- [x] Browser pane conversion does not require browser pane persistence/restore in the MVP.
+
+## Completion Evidence
+
+- Completed on `main` across commits `1dbb8d8` (implementation), `973bc81` (browser pane focus selection), and `4562e0a` (blocker fixes).
+- Verification passed: `make test`, `make build-app`, and `make lint`.
+- Delivered browser pane conversion MVP scope: right-click terminal pane conversion to browser pane, mixed terminal/browser split leaves, browser chrome/navigation reuse from PRD-0001, no unintended top-level browser tab or placeholder terminal surface, and no browser pane persistence requirement.
+- ADR verification: [ADR-0002](../adr/0002-browser-panes-in-mixed-split-layouts.md) remains aligned with the implemented heterogeneous terminal/browser split-leaf approach.
 
 ## Technical Surface
 
@@ -83,5 +90,6 @@ Browser pane conversion solves this by letting a user right-click an active term
 
 ## Revision History
 
+- 2026-04-26: Marked Completed after browser pane conversion delivery across commits `1dbb8d8`, `973bc81`, and `4562e0a`; verification passed with `make test`, `make build-app`, and `make lint`.
 - 2026-04-26: Marked Active before implementation begins; linked ADR-0002 for mixed split architecture.
 - 2026-04-26: Draft created for right-click terminal pane to browser pane conversion scope.
