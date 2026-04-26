@@ -159,7 +159,9 @@ struct TerminalSplitTreeView: View {
       case .terminal(let terminalSurface):
         terminalContent(terminalSurface, geometry: geometry)
       case .browser(let browserSurface):
-        BrowserTabView(surface: browserSurface)
+        BrowserTabView(surface: browserSurface) {
+          action(.focusPane(surfaceView.id))
+        }
       }
     }
 

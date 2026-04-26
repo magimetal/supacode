@@ -2,7 +2,13 @@ import SwiftUI
 
 struct BrowserTabView: View {
   @Bindable var surface: BrowserSurfaceState
+  var onFocusRequest: (() -> Void)?
   @State private var addressText = ""
+
+  init(surface: BrowserSurfaceState, onFocusRequest: (() -> Void)? = nil) {
+    self.surface = surface
+    self.onFocusRequest = onFocusRequest
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -11,7 +17,7 @@ struct BrowserTabView: View {
         ProgressView(value: surface.estimatedProgress)
           .controlSize(.small)
       }
-      BrowserWebViewRepresentable(webView: surface.webView)
+      BrowserWebViewRepresentable(webView: surface.webView, onFocusRequest: onFocusRequest)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .onAppear {
@@ -25,6 +31,7 @@ struct BrowserTabView: View {
   private var browserChrome: some View {
     HStack(spacing: 8) {
       Button {
+        onFocusRequest?()
         surface.goBack()
       } label: {
         Image(systemName: "chevron.left")
@@ -35,6 +42,7 @@ struct BrowserTabView: View {
       .help("Go Back")
 
       Button {
+        onFocusRequest?()
         surface.goForward()
       } label: {
         Image(systemName: "chevron.right")
@@ -45,6 +53,7 @@ struct BrowserTabView: View {
       .help("Go Forward")
 
       Button {
+        onFocusRequest?()
         surface.reloadOrStop()
       } label: {
         Image(systemName: surface.isLoading ? "xmark" : "arrow.clockwise")
@@ -56,6 +65,7 @@ struct BrowserTabView: View {
       TextField("Search or enter website name", text: $addressText)
         .textFieldStyle(.roundedBorder)
         .onSubmit {
+          onFocusRequest?()
           surface.navigateSmart(addressText)
         }
     }

@@ -100,6 +100,27 @@ struct SplitTreeTests {
     #expect(!fixture.state.convertTerminalPaneToBrowser(surfaceID: UUID()))
   }
 
+  @Test func focusingConvertedBrowserPaneUpdatesActivePaneSelection() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+    let second = try #require(fixture.second)
+    let state = fixture.state
+    let tabId = fixture.tabId
+
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+    #expect(state.convertTerminalPaneToBrowser(surfaceID: first.id))
+    #expect(state.activeSurfaceID(for: tabId) == second.id)
+
+    var emissions: [UUID] = []
+    state.onFocusChanged = { emissions.append($0) }
+
+    state.performSplitOperation(.focusPane(first.id), in: tabId)
+
+    #expect(state.activeSurfaceID(for: tabId) == first.id)
+    #expect(!state.canSplitActivePane(in: tabId))
+    #expect(emissions == [first.id])
+  }
+
   @Test func gotoSplitClearsZoomWhenNotConfigured() throws {
     let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
     let first = fixture.first
