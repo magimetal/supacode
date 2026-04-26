@@ -14,6 +14,11 @@ struct SplitTree<ViewType: NSView & Identifiable> {
   indirect enum Node: Equatable {
     case leaf(view: ViewType)
     case split(Split)
+
+    var leaf: ViewType? {
+      if case .leaf(let view) = self { return view }
+      return nil
+    }
   }
 
   enum Direction: Equatable {

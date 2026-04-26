@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TerminalSplitTreeView: View {
-  let tree: SplitTree<GhosttySurfaceView>
+  let tree: SplitTree<WorktreePaneSurface>
   // Single source of truth for which pane is active in this tab. Any surface
   // whose id does not match this gets the unfocused-split dim overlay.
   let activeSurfaceID: UUID?
@@ -47,13 +47,15 @@ struct TerminalSplitTreeView: View {
   }
 
   enum Operation {
-    case resize(node: SplitTree<GhosttySurfaceView>.Node, ratio: Double)
+    case resize(node: SplitTree<WorktreePaneSurface>.Node, ratio: Double)
     case drop(payloadId: UUID, destinationId: UUID, zone: DropZone)
+    case convertToBrowser(surfaceID: UUID)
+    case focusPane(UUID)
     case equalize
   }
 
   struct SubtreeView: View {
-    let node: SplitTree<GhosttySurfaceView>.Node
+    let node: SplitTree<WorktreePaneSurface>.Node
     var isRoot: Bool = false
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
@@ -115,7 +117,7 @@ struct TerminalSplitTreeView: View {
   }
 
   struct LeafView: View {
-    let surfaceView: GhosttySurfaceView
+    let surfaceView: WorktreePaneSurface
     let isSplit: Bool
     let activeSurfaceID: UUID?
     let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
@@ -133,7 +135,7 @@ struct TerminalSplitTreeView: View {
 
     var body: some View {
       GeometryReader { geometry in
-        GhosttyTerminalView(surfaceView: surfaceView)
+        content(geometry: geometry)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .overlay {
             if isDimmed, let fill = unfocusedSplitOverlay.fill, unfocusedSplitOverlay.opacity > 0 {
@@ -142,38 +144,6 @@ struct TerminalSplitTreeView: View {
                 .allowsHitTesting(false)
             }
           }
-          .overlay(alignment: .top) {
-            GhosttySurfaceProgressOverlay(state: surfaceView.bridge.state)
-          }
-          .overlay(alignment: .topTrailing) {
-            if surfaceView.bridge.state.searchNeedle != nil {
-              GhosttySurfaceSearchOverlay(surfaceView: surfaceView)
-            }
-          }
-          .overlay(alignment: .topTrailing) {
-            SurfaceNotificationDot()
-              .padding(6)
-              .opacity(hasNotification ? 1 : 0)
-              .allowsHitTesting(false)
-              .animation(.easeInOut(duration: 0.2), value: hasNotification)
-          }
-          .overlay(alignment: .top) {
-            if isSplit {
-              DragHandle(surfaceView: surfaceView)
-            }
-          }
-          .background {
-            Color.clear
-              .contentShape(.rect)
-              .onDrop(
-                of: [TerminalSplitTreeView.dragType],
-                delegate: SplitDropDelegate(
-                  dropState: $dropState,
-                  viewSize: geometry.size,
-                  destinationId: surfaceView.id,
-                  action: action
-                ))
-          }
           .overlay {
             if case .dropping(let zone) = dropState {
               DropOverlayView(zone: zone, size: geometry.size)
@@ -181,6 +151,57 @@ struct TerminalSplitTreeView: View {
             }
           }
       }
+    }
+
+    @ViewBuilder
+    private func content(geometry: GeometryProxy) -> some View {
+      switch surfaceView.content {
+      case .terminal(let terminalSurface):
+        terminalContent(terminalSurface, geometry: geometry)
+      case .browser(let browserSurface):
+        BrowserTabView(surface: browserSurface)
+      }
+    }
+
+    private func terminalContent(_ terminalSurface: GhosttySurfaceView, geometry: GeometryProxy) -> some View {
+      GhosttyTerminalView(surfaceView: terminalSurface)
+        .overlay(alignment: .top) {
+          GhosttySurfaceProgressOverlay(state: terminalSurface.bridge.state)
+        }
+        .overlay(alignment: .topTrailing) {
+          if terminalSurface.bridge.state.searchNeedle != nil {
+            GhosttySurfaceSearchOverlay(surfaceView: terminalSurface)
+          }
+        }
+        .overlay(alignment: .topTrailing) {
+          SurfaceNotificationDot()
+            .padding(6)
+            .opacity(hasNotification ? 1 : 0)
+            .allowsHitTesting(false)
+            .animation(.easeInOut(duration: 0.2), value: hasNotification)
+        }
+        .overlay(alignment: .top) {
+          if isSplit {
+            DragHandle(surfaceView: terminalSurface)
+          }
+        }
+        .background {
+          Color.clear
+            .contentShape(.rect)
+            .onDrop(
+              of: [TerminalSplitTreeView.dragType],
+              delegate: SplitDropDelegate(
+                dropState: $dropState,
+                viewSize: geometry.size,
+                destinationId: terminalSurface.id,
+                action: action
+              ))
+        }
+        .contextMenu {
+          Button("Convert Pane to Browser") {
+            action(.convertToBrowser(surfaceID: terminalSurface.id))
+          }
+        }
     }
 
   }
@@ -360,7 +381,7 @@ private struct SurfaceNotificationDot: View {
 /// Wraps the SwiftUI split tree in an AppKit view so we can expose an ordered
 /// list of terminal panes to assistive technologies.
 struct TerminalSplitTreeAXContainer: NSViewRepresentable {
-  let tree: SplitTree<GhosttySurfaceView>
+  let tree: SplitTree<WorktreePaneSurface>
   let activeSurfaceID: UUID?
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)
   let hasNotification: (UUID) -> Bool
@@ -381,7 +402,7 @@ struct TerminalSplitTreeAXContainer: NSViewRepresentable {
           action: action
         )
       ),
-      panes: tree.visibleLeaves()
+      panes: tree.visibleLeaves().compactMap(\.terminalSurface)
     )
   }
 }

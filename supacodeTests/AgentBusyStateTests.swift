@@ -270,7 +270,7 @@ struct AgentBusyStateTests {
       let fixture = makeStateWithSurface()
       #expect(fixture.state.performSplitAction(.newSplit(direction: .right), for: fixture.surface.id))
 
-      let leaves = fixture.state.splitTree(for: fixture.tabId).leaves()
+      let leaves = fixture.state.splitTree(for: fixture.tabId).leaves().compactMap(\.terminalSurface)
       guard let splitSurface = leaves.first(where: { $0.id != fixture.surface.id }) else {
         Issue.record("Expected split surface")
         return
@@ -316,7 +316,7 @@ struct AgentBusyStateTests {
 
     let state = manager.stateIfExists(for: resolvedWorktree.id)!
     let tabId = state.tabManager.selectedTabId!
-    let surface = state.splitTree(for: tabId).root!.leftmostLeaf()
+    let surface = state.splitTree(for: tabId).root!.leftmostLeaf().terminalSurface!
     return SurfaceFixture(manager: manager, state: state, tabId: tabId, surface: surface)
   }
 

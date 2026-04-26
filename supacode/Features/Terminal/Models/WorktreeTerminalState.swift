@@ -25,7 +25,8 @@ final class WorktreeTerminalState {
   private let worktree: Worktree
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
-  private var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
+  private var trees: [TerminalTabID: SplitTree<WorktreePaneSurface>] = [:]
+  private var browserPaneSurfaces: [UUID: BrowserSurfaceState] = [:]
   private var surfaces: [UUID: GhosttySurfaceView] = [:]
   private var browserSurfaces: [TerminalTabID: BrowserSurfaceState] = [:]
   private var focusedSurfaceIdByTab: [TerminalTabID: UUID] = [:]
@@ -114,7 +115,7 @@ final class WorktreeTerminalState {
 
   private func isTabBusy(_ tabId: TerminalTabID) -> Bool {
     guard let tree = trees[tabId] else { return false }
-    return tree.leaves().contains { surface in
+    return tree.leaves().compactMap(\.terminalSurface).contains { surface in
       isRunningProgressState(surface.bridge.state.progressState)
         || surface.bridge.state.agentBusy
     }
@@ -332,8 +333,8 @@ final class WorktreeTerminalState {
     )
     tabIsRunningById[tabId] = false
     updateShouldHideTabBar()
-    if creation.focusing, let surface = tree.root?.leftmostLeaf() {
-      focusSurface(surface, in: tabId)
+    if creation.focusing, let pane = tree.root?.leftmostLeaf() {
+      focusPane(pane, in: tabId)
     }
     onTabCreated?()
     return tabId
@@ -378,6 +379,57 @@ final class WorktreeTerminalState {
     browserSurfaces[tabId]
   }
 
+  func browserPaneSurface(for paneId: UUID) -> BrowserSurfaceState? {
+    browserPaneSurfaces[paneId]
+  }
+
+  @discardableResult
+  func convertTerminalPaneToBrowser(surfaceID: UUID, initialURL: URL? = nil) -> Bool {
+    guard let tabId = tabID(containing: surfaceID), var tree = trees[tabId] else {
+      terminalStateLogger.warning(
+        "convertTerminalPaneToBrowser: pane \(surfaceID) not found in worktree \(worktree.id)."
+      )
+      return false
+    }
+    guard let node = tree.find(id: surfaceID), let pane = node.leaf,
+      case .terminal(let terminalSurface) = pane.content
+    else {
+      terminalStateLogger.warning("convertTerminalPaneToBrowser: pane \(surfaceID) is not a terminal pane.")
+      return false
+    }
+
+    let browserSurface = BrowserSurfaceState(id: surfaceID)
+    browserSurface.onDisplayTitleChange = { [weak self] title in
+      guard let self else { return }
+      if self.focusedSurfaceIdByTab[tabId] == surfaceID {
+        self.tabManager.updateTitle(tabId, title: title)
+      }
+    }
+    if let initialURL {
+      browserSurface.load(initialURL)
+    }
+    let browserPane = WorktreePaneSurface(id: surfaceID, content: .browser(browserSurface))
+
+    do {
+      tree = try tree.replacing(node: node, with: .leaf(view: browserPane))
+    } catch {
+      terminalStateLogger.warning("convertTerminalPaneToBrowser: failed to replace pane \(surfaceID): \(error)")
+      return false
+    }
+
+    trees[tabId] = tree
+    browserPaneSurfaces[surfaceID] = browserSurface
+    terminalSurface.closeSurface()
+    cleanupSurfaceState(for: surfaceID)
+    notifications.removeAll { $0.surfaceId == surfaceID }
+    if focusedSurfaceIdByTab[tabId] == surfaceID {
+      recordActivePane(id: surfaceID, title: "New Browser", in: tabId)
+    }
+    updateRunningState(for: tabId)
+    syncFocusIfNeeded()
+    return true
+  }
+
   func isBrowserTab(_ tabId: TerminalTabID) -> Bool {
     tabManager.tabs.first { $0.id == tabId }?.kind == .browser
   }
@@ -397,7 +449,7 @@ final class WorktreeTerminalState {
   #endif
 
   func hasSurface(_ surfaceId: UUID, in tabId: TerminalTabID) -> Bool {
-    guard let tree = trees[tabId] else { return false }
+    guard surfaces[surfaceId] != nil, let tree = trees[tabId] else { return false }
     return tree.find(id: surfaceId) != nil
   }
 
@@ -458,14 +510,15 @@ final class WorktreeTerminalState {
       let focusedId = focusedSurfaceIdByTab[tabId]
       let isSelectedTab = (tabId == selectedTabId)
       let visibleSurfaceIDs = Set(tree.visibleLeaves().map(\.id))
-      for surface in tree.leaves() {
+      for pane in tree.leaves() {
+        guard let surface = pane.terminalSurface else { continue }
         let activity = Self.surfaceActivity(
-          isSurfaceVisibleInTree: visibleSurfaceIDs.contains(surface.id),
+          isSurfaceVisibleInTree: visibleSurfaceIDs.contains(pane.id),
           isSelectedTab: isSelectedTab,
           windowIsVisible: lastWindowIsVisible == true,
           windowIsKey: lastWindowIsKey == true,
           focusedSurfaceID: focusedId,
-          surfaceID: surface.id
+          surfaceID: pane.id
         )
         surface.setOcclusion(activity.isVisible)
         surface.focusDidChange(activity.isFocused)
@@ -515,24 +568,25 @@ final class WorktreeTerminalState {
   @discardableResult
   func closeFocusedSurface() -> Bool {
     guard let tabId = tabManager.selectedTabId,
-      let focusedId = focusedSurfaceIdByTab[tabId],
-      let surface = surfaces[focusedId]
+      let focusedId = focusedSurfaceIdByTab[tabId]
     else {
       return false
     }
-    surface.performBindingAction("close_surface")
-    return true
+    return closeSurface(id: focusedId)
   }
 
   @discardableResult
   func closeSurface(id surfaceID: UUID) -> Bool {
-    guard let surface = surfaces[surfaceID] else {
-      terminalStateLogger.warning(
-        "closeSurface: surface \(surfaceID) not found. Known: \(surfaces.keys.map(\.uuidString))")
-      return false
+    if let surface = surfaces[surfaceID] {
+      surface.performBindingAction("close_surface")
+      return true
     }
-    surface.performBindingAction("close_surface")
-    return true
+    if browserPaneSurfaces[surfaceID] != nil {
+      return closeBrowserPane(id: surfaceID)
+    }
+    terminalStateLogger.warning(
+      "closeSurface: surface \(surfaceID) not found. Known: \(surfaces.keys.map(\.uuidString))")
+    return false
   }
 
   @discardableResult
@@ -556,6 +610,38 @@ final class WorktreeTerminalState {
       return false
     }
     surface.navigateSearch(direction)
+    return true
+  }
+
+  @discardableResult
+  private func closeBrowserPane(id paneID: UUID) -> Bool {
+    guard let tabId = tabID(containing: paneID), let tree = trees[tabId], let node = tree.find(id: paneID) else {
+      browserPaneSurfaces.removeValue(forKey: paneID)
+      return false
+    }
+    let nextPane = focusedSurfaceIdByTab[tabId] == paneID ? tree.focusTargetAfterClosing(node) : nil
+    let newTree = tree.removing(node)
+    browserPaneSurfaces.removeValue(forKey: paneID)
+    if newTree.isEmpty {
+      trees.removeValue(forKey: tabId)
+      focusedSurfaceIdByTab.removeValue(forKey: tabId)
+      tabIsRunningById.removeValue(forKey: tabId)
+      cleanupBlockingScriptLaunchDirectory(for: tabId)
+      tabManager.closeTab(tabId)
+      updateShouldHideTabBar()
+      emitTaskStatusIfChanged()
+      onTabClosed?()
+      return true
+    }
+    updateTree(newTree, for: tabId)
+    if focusedSurfaceIdByTab[tabId] == paneID {
+      if let nextPane {
+        focusPane(nextPane, in: tabId)
+      } else {
+        focusedSurfaceIdByTab.removeValue(forKey: tabId)
+      }
+    }
+    updateRunningState(for: tabId)
     return true
   }
 
@@ -617,7 +703,7 @@ final class WorktreeTerminalState {
     initialInput: String? = nil,
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
     surfaceID: UUID? = nil
-  ) -> SplitTree<GhosttySurfaceView> {
+  ) -> SplitTree<WorktreePaneSurface> {
     if let existing = trees[tabId] {
       return existing
     }
@@ -629,9 +715,10 @@ final class WorktreeTerminalState {
       context: context,
       surfaceID: surfaceID
     )
-    let tree = SplitTree(view: surface)
+    let pane = WorktreePaneSurface(id: surface.id, content: .terminal(surface))
+    let tree = SplitTree(view: pane)
     trees[tabId] = tree
-    focusedSurfaceIdByTab[tabId] = surface.id
+    focusedSurfaceIdByTab[tabId] = pane.id
     return tree
   }
 
@@ -644,8 +731,8 @@ final class WorktreeTerminalState {
     guard let tabId = tabID(containing: surfaceId), var tree = trees[tabId] else {
       return false
     }
-    guard let targetNode = tree.find(id: surfaceId) else { return false }
-    guard let targetSurface = surfaces[surfaceId] else { return false }
+    guard let targetNode = tree.find(id: surfaceId), let targetPane = targetNode.leaf else { return false }
+    guard targetPane.terminalSurface != nil else { return false }
 
     switch action {
     case .newSplit(let direction):
@@ -656,10 +743,11 @@ final class WorktreeTerminalState {
         context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
         surfaceID: newSurfaceID,
       )
+      let newPane = WorktreePaneSurface(id: newSurface.id, content: .terminal(newSurface))
       do {
         let newTree = try tree.inserting(
-          view: newSurface,
-          at: targetSurface,
+          view: newPane,
+          at: targetPane,
           direction: mapSplitDirection(direction)
         )
         updateTree(newTree, for: tabId)
@@ -675,19 +763,19 @@ final class WorktreeTerminalState {
 
     case .gotoSplit(let direction):
       let focusDirection = mapFocusDirection(direction)
-      guard let nextSurface = tree.focusTarget(for: focusDirection, from: targetNode) else {
+      guard let nextPane = tree.focusTarget(for: focusDirection, from: targetNode) else {
         return false
       }
       if tree.zoomed != nil {
         if splitPreserveZoomOnNavigation() {
-          let nextNode = tree.root?.node(view: nextSurface)
+          let nextNode = tree.root?.node(view: nextPane)
           tree = tree.settingZoomed(nextNode)
         } else {
           tree = tree.settingZoomed(nil)
         }
         updateTree(tree, for: tabId)
       }
-      focusSurface(nextSurface, in: tabId)
+      focusPane(nextPane, in: tabId)
       syncFocusIfNeeded()
       return true
 
@@ -714,7 +802,7 @@ final class WorktreeTerminalState {
       guard tree.isSplit else { return false }
       let newZoomed = (tree.zoomed == targetNode) ? nil : targetNode
       updateTree(tree.settingZoomed(newZoomed), for: tabId)
-      focusSurface(targetSurface, in: tabId)
+      focusPane(targetPane, in: tabId)
       return true
     }
   }
@@ -733,8 +821,8 @@ final class WorktreeTerminalState {
       }
 
     case .drop(let payloadId, let destinationId, let zone):
-      guard let payload = surfaces[payloadId] else { return }
-      guard let destination = surfaces[destinationId] else { return }
+      guard let payload = tree.find(id: payloadId)?.leaf, payload.terminalSurface != nil else { return }
+      guard let destination = tree.find(id: destinationId)?.leaf, destination.terminalSurface != nil else { return }
       if payload === destination { return }
       guard let sourceNode = tree.root?.node(view: payload) else { return }
       let treeWithoutSource = tree.removing(sourceNode)
@@ -746,10 +834,16 @@ final class WorktreeTerminalState {
           direction: mapDropZone(zone)
         )
         updateTree(newTree, for: tabId)
-        focusSurface(payload, in: tabId)
+        focusPane(payload, in: tabId)
       } catch {
         return
       }
+
+    case .convertToBrowser(let surfaceID):
+      _ = convertTerminalPaneToBrowser(surfaceID: surfaceID)
+
+    case .focusPane(let paneID):
+      recordActivePane(id: paneID, in: tabId)
 
     case .equalize:
       updateTree(tree.equalized(), for: tabId)
@@ -771,6 +865,7 @@ final class WorktreeTerminalState {
     surfaces.removeAll()
     trees.removeAll()
     browserSurfaces.removeAll()
+    browserPaneSurfaces.removeAll()
     focusedSurfaceIdByTab.removeAll()
     tabIsRunningById.removeAll()
     // Agent busy state lives on GhosttySurfaceState and is cleaned up
@@ -847,8 +942,12 @@ final class WorktreeTerminalState {
         layoutLogger.warning("Skipping tab \(tab.id.rawValue) during snapshot capture (no tree)")
         continue
       }
-      let layout = captureLayoutNode(root)
       let leaves = root.leaves()
+      guard leaves.allSatisfy(\.isTerminal) else {
+        layoutLogger.warning("Skipping mixed terminal/browser tab \(tab.id.rawValue) during snapshot capture")
+        continue
+      }
+      let layout = captureLayoutNode(root)
       let focusedId = focusedSurfaceIdByTab[tab.id]
       let focusedLeafIndex =
         focusedId.flatMap { id in
@@ -876,12 +975,12 @@ final class WorktreeTerminalState {
   }
 
   private func captureLayoutNode(
-    _ node: SplitTree<GhosttySurfaceView>.Node
+    _ node: SplitTree<WorktreePaneSurface>.Node
   ) -> TerminalLayoutSnapshot.LayoutNode {
     switch node {
     case .leaf(let view):
       return .leaf(
-        TerminalLayoutSnapshot.SurfaceSnapshot(id: view.id, workingDirectory: view.bridge.state.pwd)
+        TerminalLayoutSnapshot.SurfaceSnapshot(id: view.id, workingDirectory: view.terminalSurface?.bridge.state.pwd)
       )
     case .split(let split):
       let direction: SplitDirection =
@@ -929,9 +1028,10 @@ final class WorktreeTerminalState {
         context: context,
         surfaceID: tabSnapshot.layout.firstLeaf.id,
       )
-      let tree = SplitTree(view: surface)
+      let pane = WorktreePaneSurface(id: surface.id, content: .terminal(surface))
+      let tree = SplitTree(view: pane)
       trees[tabId] = tree
-      focusedSurfaceIdByTab[tabId] = surface.id
+      focusedSurfaceIdByTab[tabId] = pane.id
       tabIsRunningById[tabId] = false
 
       // Recursively restore splits.
@@ -976,7 +1076,7 @@ final class WorktreeTerminalState {
     // Create the right child by splitting the anchor.
     let rightPwd = split.right.firstLeaf.workingDirectory
     let rightWorkingDir = rightPwd.flatMap { URL(filePath: $0, directoryHint: .isDirectory) }
-    let direction: SplitTree<GhosttySurfaceView>.NewDirection =
+    let direction: SplitTree<WorktreePaneSurface>.NewDirection =
       split.direction == .horizontal ? .right : .down
 
     guard
@@ -1000,7 +1100,7 @@ final class WorktreeTerminalState {
 
   private func createRestorationSplit(
     at anchor: GhosttySurfaceView,
-    direction: SplitTree<GhosttySurfaceView>.NewDirection,
+    direction: SplitTree<WorktreePaneSurface>.NewDirection,
     ratio: Double,
     workingDirectory: URL?,
     tabId: TerminalTabID,
@@ -1016,7 +1116,9 @@ final class WorktreeTerminalState {
       surfaceID: surfaceID,
     )
     do {
-      tree = try tree.inserting(view: newSurface, at: anchor, direction: direction, ratio: ratio)
+      guard let anchorPane = tree.find(id: anchor.id)?.leaf else { return nil }
+      let newPane = WorktreePaneSurface(id: newSurface.id, content: .terminal(newSurface))
+      tree = try tree.inserting(view: newPane, at: anchorPane, direction: direction, ratio: ratio)
       trees[tabId] = tree
       return newSurface
     } catch {
@@ -1299,8 +1401,17 @@ final class WorktreeTerminalState {
       return
     }
     let tree = splitTree(for: tabId)
-    if let surface = tree.visibleLeaves().first {
+    if let pane = tree.visibleLeaves().first {
+      focusPane(pane, in: tabId)
+    }
+  }
+
+  private func focusPane(_ pane: WorktreePaneSurface, in tabId: TerminalTabID) {
+    switch pane.content {
+    case .terminal(let surface):
       focusSurface(surface, in: tabId)
+    case .browser(let browser):
+      recordActivePane(id: pane.id, title: browser.pageTitle.isEmpty ? "New Browser" : browser.pageTitle, in: tabId)
     }
   }
 
@@ -1322,10 +1433,38 @@ final class WorktreeTerminalState {
     emitFocusChangedIfNeeded(surface.id)
   }
 
+  func recordActivePane(id paneID: UUID, in tabId: TerminalTabID) {
+    let title: String?
+    if let surface = surfaces[paneID] {
+      title = surface.bridge.state.title
+      markNotificationsRead(forSurfaceID: paneID)
+    } else if let browser = browserPaneSurfaces[paneID] {
+      title = browser.pageTitle.isEmpty ? "New Browser" : browser.pageTitle
+    } else {
+      title = nil
+    }
+    recordActivePane(id: paneID, title: title, in: tabId)
+  }
+
+  private func recordActivePane(id paneID: UUID, title: String?, in tabId: TerminalTabID) {
+    focusedSurfaceIdByTab[tabId] = paneID
+    if let title, !title.isEmpty {
+      tabManager.updateTitle(tabId, title: title)
+    }
+    emitFocusChangedIfNeeded(paneID)
+  }
+
   // Single source of truth for the tab's active pane so the overlay renderer
   // can't drift across surfaces.
   func activeSurfaceID(for tabId: TerminalTabID) -> UUID? {
     focusedSurfaceIdByTab[tabId]
+  }
+
+  func canSplitActivePane(in tabId: TerminalTabID) -> Bool {
+    guard tabKind(tabId) == .terminal,
+      let focusedId = focusedSurfaceIdByTab[tabId]
+    else { return false }
+    return surfaces[focusedId] != nil
   }
 
   /// Appends a notification from an agent hook on a specific surface.
@@ -1413,9 +1552,14 @@ final class WorktreeTerminalState {
 
   private func removeTree(for tabId: TerminalTabID) {
     guard let tree = trees.removeValue(forKey: tabId) else { return }
-    for surface in tree.leaves() {
-      surface.closeSurface()
-      cleanupSurfaceState(for: surface.id)
+    for pane in tree.leaves() {
+      switch pane.content {
+      case .terminal(let surface):
+        surface.closeSurface()
+        cleanupSurfaceState(for: pane.id)
+      case .browser:
+        browserPaneSurfaces.removeValue(forKey: pane.id)
+      }
     }
     focusedSurfaceIdByTab.removeValue(forKey: tabId)
     tabIsRunningById.removeValue(forKey: tabId)
@@ -1437,7 +1581,7 @@ final class WorktreeTerminalState {
 
   private func updateRunningState(for tabId: TerminalTabID) {
     guard let tree = trees[tabId] else { return }
-    let isRunningNow = tree.leaves().contains { surface in
+    let isRunningNow = tree.leaves().compactMap(\.terminalSurface).contains { surface in
       isRunningProgressState(surface.bridge.state.progressState)
     }
     tabIsRunningById[tabId] = isRunningNow
@@ -1470,7 +1614,7 @@ final class WorktreeTerminalState {
     applySurfaceActivity()
   }
 
-  private func updateTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
+  private func updateTree(_ tree: SplitTree<WorktreePaneSurface>, for tabId: TerminalTabID) {
     trees[tabId] = tree
     syncFocusIfNeeded()
   }
@@ -1488,7 +1632,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapSplitDirection(_ direction: GhosttySplitAction.NewDirection)
-    -> SplitTree<GhosttySurfaceView>.NewDirection
+    -> SplitTree<WorktreePaneSurface>.NewDirection
   {
     switch direction {
     case .left:
@@ -1503,7 +1647,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapFocusDirection(_ direction: GhosttySplitAction.FocusDirection)
-    -> SplitTree<GhosttySurfaceView>.FocusDirection
+    -> SplitTree<WorktreePaneSurface>.FocusDirection
   {
     switch direction {
     case .previous:
@@ -1522,7 +1666,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapResizeDirection(_ direction: GhosttySplitAction.ResizeDirection)
-    -> SplitTree<GhosttySurfaceView>.SpatialDirection
+    -> SplitTree<WorktreePaneSurface>.SpatialDirection
   {
     switch direction {
     case .left:
@@ -1548,7 +1692,7 @@ final class WorktreeTerminalState {
       cleanupSurfaceState(for: view.id)
       return
     }
-    let nextSurface =
+    let nextPane =
       focusedSurfaceIdByTab[tabId] == view.id
       ? tree.focusTargetAfterClosing(node)
       : nil
@@ -1577,8 +1721,8 @@ final class WorktreeTerminalState {
     updateTree(newTree, for: tabId)
     updateRunningState(for: tabId)
     if focusedSurfaceIdByTab[tabId] == view.id {
-      if let nextSurface {
-        focusSurface(nextSurface, in: tabId)
+      if let nextPane {
+        focusPane(nextPane, in: tabId)
       } else {
         focusedSurfaceIdByTab.removeValue(forKey: tabId)
       }
@@ -1614,7 +1758,7 @@ final class WorktreeTerminalState {
   }
 
   private func mapDropZone(_ zone: TerminalSplitTreeView.DropZone)
-    -> SplitTree<GhosttySurfaceView>.NewDirection
+    -> SplitTree<WorktreePaneSurface>.NewDirection
   {
     switch zone {
     case .top:

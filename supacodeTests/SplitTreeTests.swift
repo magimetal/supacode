@@ -74,9 +74,30 @@ struct SplitTreeTests {
     #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
     #expect(fixture.state.performSplitAction(.gotoSplit(direction: .next), for: first.id))
 
-    let visibleLeaves = fixture.state.splitTree(for: fixture.tabId).visibleLeaves()
+    let visibleLeaves = fixture.state.splitTree(for: fixture.tabId).visibleLeaves().compactMap(\.terminalSurface)
     #expect(visibleLeaves.count == 1)
     #expect(visibleLeaves.first === second)
+  }
+
+  @Test func convertingTerminalPaneToBrowserPreservesSiblingsAndRemovesTerminalSurface() throws {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    let first = fixture.first
+    let second = try #require(fixture.second)
+
+    #expect(fixture.state.convertTerminalPaneToBrowser(surfaceID: first.id))
+    let leaves = fixture.state.splitTree(for: fixture.tabId).leaves()
+
+    #expect(leaves.count == 2)
+    #expect(leaves.first { $0.id == first.id }?.isBrowser == true)
+    #expect(leaves.first { $0.id == second.id }?.terminalSurface === second)
+    #expect(!fixture.state.hasSurface(first.id, in: fixture.tabId))
+    #expect(fixture.state.hasSurface(second.id, in: fixture.tabId))
+    #expect(fixture.state.browserPaneSurface(for: first.id) != nil)
+  }
+
+  @Test func convertingUnknownPaneIsSafe() {
+    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
+    #expect(!fixture.state.convertTerminalPaneToBrowser(surfaceID: UUID()))
   }
 
   @Test func gotoSplitClearsZoomWhenNotConfigured() throws {
@@ -141,9 +162,9 @@ struct SplitTreeTests {
       splitPreserveZoomOnNavigation: { preserveZoomOnNavigation }
     )
     let tabId = state.createTab()!
-    let first = state.splitTree(for: tabId).root!.leftmostLeaf()
+    let first = state.splitTree(for: tabId).root!.leftmostLeaf().terminalSurface!
     _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
-    let leaves = state.splitTree(for: tabId).leaves()
+    let leaves = state.splitTree(for: tabId).leaves().compactMap(\.terminalSurface)
     return WorktreeFixture(
       state: state,
       tabId: tabId,

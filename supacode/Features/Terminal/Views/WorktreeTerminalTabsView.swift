@@ -28,7 +28,7 @@ struct WorktreeTerminalTabsView: View {
           splitVertically: {
             _ = state.performBindingActionOnFocusedSurface("new_split:right")
           },
-          canSplit: state.tabManager.selectedTabId.map { state.tabKind($0) == .terminal } ?? false,
+          canSplit: state.tabManager.selectedTabId.map { state.canSplitActivePane(in: $0) } ?? false,
           closeTab: { tabId in
             state.closeTab(tabId)
           },
