@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import PostHog
 import SupacodeSettingsShared
 
 @Reducer
@@ -18,25 +17,20 @@ struct UpdatesFeature {
     case checkForUpdates
   }
 
-  @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(UpdaterClient.self) private var updaterClient
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
-      case .applySettings(let channel, let checks, let downloads):
-        let checkInBackground = !state.didConfigureUpdates
+      case .applySettings(let channel, _, _):
         state.didConfigureUpdates = true
         return .run { _ in
           await updaterClient.setUpdateChannel(channel)
-          await updaterClient.configure(checks, downloads, checkInBackground)
+          await updaterClient.configure(false, false, false)
         }
 
       case .checkForUpdates:
-        analyticsClient.capture("update_checked", nil)
-        return .run { _ in
-          await updaterClient.checkForUpdates()
-        }
+        return .none
       }
     }
   }

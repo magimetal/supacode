@@ -172,12 +172,6 @@ struct CommandPaletteFeature {
   ) -> [CommandPaletteItem] {
     var items: [CommandPaletteItem] = [
       CommandPaletteItem(
-        id: CommandPaletteItemID.globalCheckForUpdates,
-        title: "Check for Updates",
-        subtitle: nil,
-        kind: .checkForUpdates
-      ),
-      CommandPaletteItem(
         id: CommandPaletteItemID.globalOpenSettings,
         title: "Open Settings",
         subtitle: nil,
@@ -436,7 +430,6 @@ private func makeClosePullRequestItem(
 
 private enum CommandPaletteItemID {
   static let ghosttyPrefix = "ghostty."
-  static let globalCheckForUpdates = "global.check-for-updates"
   static let globalOpenSettings = "global.open-settings"
   static let globalOpenRepository = "global.open-repository"
   static let globalNewWorktree = "global.new-worktree"
@@ -445,7 +438,6 @@ private enum CommandPaletteItemID {
 
   static var globalIDs: [CommandPaletteItem.ID] {
     [
-      globalCheckForUpdates,
       globalOpenSettings,
       globalOpenRepository,
       globalNewWorktree,

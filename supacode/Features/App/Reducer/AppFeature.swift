@@ -742,7 +742,7 @@ struct AppFeature {
         return .send(.repositories(.selectWorktree(worktreeID)))
 
       case .commandPalette(.delegate(.checkForUpdates)):
-        return .send(.updates(.checkForUpdates))
+        return .none
 
       case .commandPalette(.delegate(.openSettings)):
         return .send(.settings(.setSelection(.general)))

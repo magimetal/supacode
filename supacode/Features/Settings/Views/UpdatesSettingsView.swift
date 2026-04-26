@@ -1,6 +1,5 @@
 import ComposableArchitecture
 import SupacodeSettingsFeature
-import SupacodeSettingsShared
 import SwiftUI
 
 struct UpdatesSettingsView: View {
@@ -9,35 +8,11 @@ struct UpdatesSettingsView: View {
 
   var body: some View {
     Form {
-      Section {
-        Picker(selection: $settingsStore.updateChannel) {
-          Text("Stable").tag(UpdateChannel.stable)
-          Text("Tip").tag(UpdateChannel.tip)
-        } label: {
-          Text("Channel")
-          Text(
-            settingsStore.updateChannel == .stable ? "Recommended for most users." : "Get the latest features early.")
-        }
-        Button {
-          updatesStore.send(.checkForUpdates)
-        } label: {
-          Text("Check for Updates now")
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-        .buttonBorderShape(.roundedRectangle)
-      }
       Section("Automatic Updates") {
-        Toggle(isOn: $settingsStore.updatesAutomaticallyCheckForUpdates) {
-          Text("Check for updates automatically")
-          Text("Periodically checks for new versions while Supacode is running.")
-        }
-        Toggle(isOn: $settingsStore.updatesAutomaticallyDownloadUpdates) {
-          Text("Download and install updates automatically")
-          Text("Downloads updates in the background. You will be prompted to restart to apply them.")
-        }
-        .disabled(!settingsStore.updatesAutomaticallyCheckForUpdates)
+        Text("Automatic updates are disabled for this fork.")
+          .font(.headline)
+        Text("Install future builds manually until a fork-owned update channel is available.")
+          .foregroundStyle(.secondary)
       }
     }
     .formStyle(.grouped)

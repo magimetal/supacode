@@ -78,13 +78,13 @@ struct AppFeatureCommandPaletteTests {
     }
   }
 
-  @Test(.dependencies) func checkForUpdatesDispatchesUpdateAction() async {
+  @Test(.dependencies) func checkForUpdatesDelegateIsInert() async {
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
     }
 
     await store.send(.commandPalette(.delegate(.checkForUpdates)))
-    await store.receive(\.updates.checkForUpdates)
+    await store.finish()
   }
 
   @Test(.dependencies) func ghosttyCommandDispatchesBindingActionToTerminalClient() async {
