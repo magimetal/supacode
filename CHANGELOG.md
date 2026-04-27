@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-04-27
+
 ### Added
 
 - Add generated hierarchical `AGENTS.md` project documentation and `CLAUDE.md` compatibility links for agent guidance.
@@ -14,3 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update repository agent guidance and ignore generated `.trash/` artifacts.
+
+### Fixed
+
+- Fix browser pane hover hit-testing stealing pane focus; browser panes now request focus only for mouse-down events.
