@@ -22,14 +22,33 @@ let appResources: ResourceFileElements = [
   "supacode/notification.wav",
 ]
 
+let agentInstructionResourceExclusions = [
+  "AGENTS.md",
+  "CLAUDE.md",
+]
+
 let appBuildableFolders: [BuildableFolder] = [
-  "supacode/App",
-  "supacode/Clients",
-  "supacode/Commands",
-  "supacode/Domain",
-  "supacode/Features",
-  "supacode/Infrastructure",
-  "supacode/Support",
+  .folder("supacode/App", exceptions: [.exception(excluded: agentInstructionResourceExclusions)]),
+  .folder("supacode/Clients", exceptions: [.exception(excluded: agentInstructionResourceExclusions)]),
+  .folder("supacode/Commands", exceptions: [.exception(excluded: agentInstructionResourceExclusions)]),
+  .folder("supacode/Domain", exceptions: [.exception(excluded: agentInstructionResourceExclusions)]),
+  .folder(
+    "supacode/Features",
+    exceptions: [.exception(excluded: [
+      "Repositories/AGENTS.md",
+      "Repositories/CLAUDE.md",
+      "Terminal/AGENTS.md",
+      "Terminal/CLAUDE.md",
+    ])]
+  ),
+  .folder(
+    "supacode/Infrastructure",
+    exceptions: [.exception(excluded: [
+      "Ghostty/AGENTS.md",
+      "Ghostty/CLAUDE.md",
+    ])]
+  ),
+  .folder("supacode/Support", exceptions: [.exception(excluded: agentInstructionResourceExclusions)]),
 ]
 
 let appDependencies: [TargetDependency] = [
