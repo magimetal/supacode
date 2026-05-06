@@ -16,19 +16,10 @@ struct BrowserWebViewContainerTests {
 
   @Test func mouseDownHitTestingBrowserContentRequestsPaneFocus() throws {
     let fixture = makeFixture()
-    let window = NSWindow(
-      contentRect: fixture.container.frame,
-      styleMask: .borderless,
-      backing: .buffered,
-      defer: false,
-    )
-    window.contentView = fixture.container
-    window.orderFrontRegardless()
-    defer { window.close() }
+    let target = fixture.container.hitTest(NSPoint(x: 50, y: 50))
+    let event = try #require(mouseEvent(type: .leftMouseDown))
 
-    let event = try #require(mouseEvent(type: .leftMouseDown, windowNumber: window.windowNumber))
-
-    NSApp.sendEvent(event)
+    fixture.container.requestFocusIfNeeded(hitTestTarget: target, event: event)
 
     #expect(fixture.focusRequestCount() == 1)
   }

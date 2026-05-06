@@ -41,10 +41,18 @@ final class BrowserWebViewContainer: NSView {
 
   override func hitTest(_ point: NSPoint) -> NSView? {
     let target = super.hitTest(point)
-    if target != nil, Self.shouldRequestFocus(for: NSApp.currentEvent) {
+    requestFocusIfNeeded(hitTestTarget: target, event: NSApp.currentEvent)
+    return target
+  }
+
+  func requestFocusIfNeeded(hitTestTarget target: NSView?, event: NSEvent?) {
+    if Self.shouldRequestFocus(hitTestTarget: target, event: event) {
       onFocusRequest?()
     }
-    return target
+  }
+
+  static func shouldRequestFocus(hitTestTarget target: NSView?, event: NSEvent?) -> Bool {
+    target != nil && shouldRequestFocus(for: event)
   }
 
   static func shouldRequestFocus(for event: NSEvent?) -> Bool {
