@@ -1,6 +1,6 @@
 # PRD-0004: Worktree Switch Hotkey Modifier
 
-- **Status:** Active
+- **Status:** Completed
 - **Date:** 2026-05-06
 - **Author:** Magi Metal
 - **Related:** N/A
@@ -42,15 +42,15 @@ Change direct worktree switching away from plain Control+number while preserving
 
 ## Acceptance Criteria
 
-- [ ] Plain Control+number no longer switches worktrees in the default configuration.
-- [ ] Control+Shift+number switches to the corresponding visible sidebar worktree slot for slots 1-10 (`1`-`9`, then `0`).
-- [ ] Sidebar shortcut hints show the effective worktree switch shortcuts as `⌃⇧1` through `⌃⇧0` when the worktree hint modifier state is active.
-- [ ] Sidebar shortcut hints do not appear when only plain Control is held.
-- [ ] Command+number tab switching remains unchanged and continues to switch terminal tabs.
-- [ ] Tab-bar shortcut hints remain `⌘1` through `⌘9` and continue to appear while Command is held.
-- [ ] Worktree shortcut overrides, if configured, continue to drive both the registered shortcut and the displayed sidebar hint.
-- [ ] The implementation avoids introducing conflicts with macOS reserved screenshot shortcuts (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) or Option-number text input/Meta behavior.
-- [ ] Release readiness includes the hotkey change in the fork build/release notes and reports the build as ready for user testing.
+- [x] Plain Control+number no longer switches worktrees in the default configuration.
+- [x] Control+Shift+number switches to the corresponding visible sidebar worktree slot for slots 1-10 (`1`-`9`, then `0`).
+- [x] Sidebar shortcut hints show the effective worktree switch shortcuts as `⌃⇧1` through `⌃⇧0` when the worktree hint modifier state is active.
+- [x] Sidebar shortcut hints do not appear when only plain Control is held.
+- [x] Command+number tab switching remains unchanged and continues to switch terminal tabs.
+- [x] Tab-bar shortcut hints remain `⌘1` through `⌘9` and continue to appear while Command is held.
+- [x] Worktree shortcut overrides, if configured, continue to drive both the registered shortcut and the displayed sidebar hint.
+- [x] The implementation avoids introducing conflicts with macOS reserved screenshot shortcuts (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) or Option-number text input/Meta behavior.
+- [x] Release readiness includes the hotkey change in the fork build/release notes and reports the build as ready for user testing.
 
 ## Technical Surface
 
@@ -75,10 +75,19 @@ Change direct worktree switching away from plain Control+number while preserving
 
 ## Open Questions
 
-- Should release notes describe this as a breaking shortcut change or a terminal-compatibility fix?
-- Should any existing user shortcut override persisted as Control+number be migrated, warned about, or left untouched as an explicit user override?
+- Resolved: release notes describe this as a terminal compatibility fix/hotkey change.
+- Resolved: existing user shortcut overrides remain explicit user configuration; no migration was added.
+
+## Completion Summary
+
+- Implemented default worktree selection shortcuts as Control+Shift+number in commit `e29e2d3`; plain Control+number is no longer the default worktree switch chord.
+- Updated shortcut hint behavior so sidebar worktree hints use the Control+Shift state while Command-held terminal tab hints remain unchanged.
+- Bumped the fork release to v0.9.5/build 141 in commit `d828c0e` and published release assets at https://github.com/magimetal/supacode/releases/tag/v0.9.5.
+- Verification completed before PRD closure: focused tests passed (23), `make build-app` succeeded, `make lint` succeeded, and final execution review verdict was PASS.
+- Remaining manual QA: user install smoke test from the uploaded release asset; not a PRD completion blocker.
 
 ## Revision History
 
 - 2026-05-06: Draft created for changing worktree switching away from plain Control+number.
 - 2026-05-06: Moved to Active after implementation plan review passed.
+- 2026-05-06: Marked Completed after implementation, release v0.9.5/build 141, and PASS execution review.
