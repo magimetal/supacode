@@ -186,6 +186,13 @@ public struct AppShortcut: Identifiable {
 
   public var displaySymbols: [String] {
     if let keyCode {
+      if case .selectWorktree = id,
+        rawModifierFlags == [.control, .shift],
+        ghosttyKeyName.count == 1,
+        ghosttyKeyName.allSatisfy(\.isNumber)
+      {
+        return ["⌃", "⇧", ghosttyKeyName]
+      }
       return AppShortcutOverride.displaySymbols(for: keyCode, modifiers: rawModifierFlags)
     }
     return keyboardShortcut.displaySymbols
@@ -322,16 +329,16 @@ public enum AppShortcuts {
     keyEquivalent: .rightArrow, ghosttyKeyName: "arrow_right", modifiers: [.command, .control]
   )
 
-  public static let selectWorktree1 = AppShortcut(id: .selectWorktree(1), key: "1", modifiers: [.control])
-  public static let selectWorktree2 = AppShortcut(id: .selectWorktree(2), key: "2", modifiers: [.control])
-  public static let selectWorktree3 = AppShortcut(id: .selectWorktree(3), key: "3", modifiers: [.control])
-  public static let selectWorktree4 = AppShortcut(id: .selectWorktree(4), key: "4", modifiers: [.control])
-  public static let selectWorktree5 = AppShortcut(id: .selectWorktree(5), key: "5", modifiers: [.control])
-  public static let selectWorktree6 = AppShortcut(id: .selectWorktree(6), key: "6", modifiers: [.control])
-  public static let selectWorktree7 = AppShortcut(id: .selectWorktree(7), key: "7", modifiers: [.control])
-  public static let selectWorktree8 = AppShortcut(id: .selectWorktree(8), key: "8", modifiers: [.control])
-  public static let selectWorktree9 = AppShortcut(id: .selectWorktree(9), key: "9", modifiers: [.control])
-  public static let selectWorktree0 = AppShortcut(id: .selectWorktree(0), key: "0", modifiers: [.control])
+  public static let selectWorktree1 = AppShortcut(id: .selectWorktree(1), key: "1", modifiers: [.control, .shift])
+  public static let selectWorktree2 = AppShortcut(id: .selectWorktree(2), key: "2", modifiers: [.control, .shift])
+  public static let selectWorktree3 = AppShortcut(id: .selectWorktree(3), key: "3", modifiers: [.control, .shift])
+  public static let selectWorktree4 = AppShortcut(id: .selectWorktree(4), key: "4", modifiers: [.control, .shift])
+  public static let selectWorktree5 = AppShortcut(id: .selectWorktree(5), key: "5", modifiers: [.control, .shift])
+  public static let selectWorktree6 = AppShortcut(id: .selectWorktree(6), key: "6", modifiers: [.control, .shift])
+  public static let selectWorktree7 = AppShortcut(id: .selectWorktree(7), key: "7", modifiers: [.control, .shift])
+  public static let selectWorktree8 = AppShortcut(id: .selectWorktree(8), key: "8", modifiers: [.control, .shift])
+  public static let selectWorktree9 = AppShortcut(id: .selectWorktree(9), key: "9", modifiers: [.control, .shift])
+  public static let selectWorktree0 = AppShortcut(id: .selectWorktree(0), key: "0", modifiers: [.control, .shift])
 
   public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
   public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])

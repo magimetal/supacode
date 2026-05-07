@@ -28,14 +28,16 @@ struct AppShortcutsTests {
     }
   }
 
-  @Test func worktreeSelectionUsesControlNumberShortcuts() {
+  @Test func worktreeSelectionUsesControlShiftNumberShortcuts() {
     expectNoDifference(
       AppShortcuts.worktreeSelection.map(\.display),
-      ["⌃1", "⌃2", "⌃3", "⌃4", "⌃5", "⌃6", "⌃7", "⌃8", "⌃9", "⌃0"]
+      ["⌃⇧1", "⌃⇧2", "⌃⇧3", "⌃⇧4", "⌃⇧5", "⌃⇧6", "⌃⇧7", "⌃⇧8", "⌃⇧9", "⌃⇧0"]
     )
 
     for shortcut in AppShortcuts.worktreeSelection {
-      #expect(shortcut.modifiers == .control)
+      #expect(shortcut.modifiers.contains(.control))
+      #expect(shortcut.modifiers.contains(.shift))
+      #expect(shortcut.modifiers != .control)
     }
   }
 
@@ -80,6 +82,12 @@ struct AppShortcutsTests {
 
     for argument in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map({ "--keybind=ctrl+digit_\($0)=unbind" }) {
       #expect(arguments.contains(argument) == false)
+    }
+
+    for argument in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map({
+      "--keybind=ctrl+shift+\($0)=unbind"
+    }) {
+      #expect(arguments.contains(argument))
     }
   }
 

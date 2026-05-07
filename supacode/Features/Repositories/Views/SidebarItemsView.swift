@@ -27,7 +27,7 @@ struct SidebarItemsView: View {
     let sections = state.sidebarItemSections(in: repository)
     let isSoleDefaultWorktree = sections.allRows.count == 1 && sections.main != nil
     let isRepositoryRemoving = state.isRemovingRepository(repository)
-    let showShortcutHints = commandKeyObserver.isPressed
+    let showShortcutHints = commandKeyObserver.isWorktreeSelectionPressed
     let shortcutIndexByID: [Worktree.ID: Int] =
       showShortcutHints
       ? Dictionary(uniqueKeysWithValues: hotkeyRows.enumerated().map { ($0.element.id, $0.offset) })

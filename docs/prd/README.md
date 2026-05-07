@@ -84,3 +84,4 @@ Reference PRD IDs in changelog entries for feature work:
 | 0001 | Embedded Browser Tabs | Completed | 2026-04-26 |
 | 0002 | Browser Pane Conversion | Completed | 2026-04-26 |
 | 0003 | Disable Auto-Updates After Fork Divergence | Completed | 2026-04-26 |
+| 0004 | Worktree Switch Hotkey Modifier | Active | 2026-05-06 |
