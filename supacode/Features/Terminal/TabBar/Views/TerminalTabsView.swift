@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabsView: View {
@@ -8,6 +9,7 @@ struct TerminalTabsView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
+  let runningAgents: (TerminalTabID) -> [AgentPresenceManager.AgentInstance]
 
   @State private var draggingTabId: TerminalTabID?
   @State private var draggingStartLocation: CGFloat?
@@ -17,6 +19,7 @@ struct TerminalTabsView: View {
   @State private var scrollOffset: CGFloat = 0
   @State private var contentWidth: CGFloat = 0
   @State private var containerWidth: CGFloat = 0
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     GeometryReader { geometryProxy in
@@ -36,6 +39,7 @@ struct TerminalTabsView: View {
             closeAll: closeAll,
             renameTab: renameTab,
             hasNotification: hasNotification,
+            runningAgents: runningAgents,
             scrollReader: scrollReader
           )
           .padding(.horizontal, TerminalTabBarMetrics.barPadding)
@@ -73,24 +77,34 @@ struct TerminalTabsView: View {
           }
         }
       }
-      .overlay(alignment: .leading) {
-        TerminalTabsOverflowShadow(
-          width: TerminalTabBarMetrics.overflowShadowWidth,
-          startPoint: .leading,
-          endPoint: .trailing
+      .mask(
+        HStack(spacing: 0) {
+          // Edge regions fade the tabs into transparency when the strip can
+          // scroll further in that direction; otherwise stay fully opaque so
+          // the first/last tab isn't clipped.
+          LinearGradient(
+            colors: [canScrollLeft ? .clear : .white, .white],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+          .frame(width: TerminalTabBarMetrics.overflowShadowWidth)
+          Color.white.frame(maxWidth: .infinity)
+          LinearGradient(
+            colors: [.white, canScrollRight ? .clear : .white],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+          .frame(width: TerminalTabBarMetrics.overflowShadowWidth)
+        }
+        .animation(
+          reduceMotion ? nil : .easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration),
+          value: canScrollLeft
         )
-        .opacity(canScrollLeft ? 1 : 0)
-        .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: canScrollLeft)
-      }
-      .overlay(alignment: .trailing) {
-        TerminalTabsOverflowShadow(
-          width: TerminalTabBarMetrics.overflowShadowWidth,
-          startPoint: .trailing,
-          endPoint: .leading
+        .animation(
+          reduceMotion ? nil : .easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration),
+          value: canScrollRight
         )
-        .opacity(canScrollRight ? 1 : 0)
-        .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: canScrollRight)
-      }
+      )
     }
   }
 

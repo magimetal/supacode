@@ -13,6 +13,7 @@ private struct RepositoryLabel: View {
   let isGitRepository: Bool
 
   @State private var avatarURL: URL?
+  @Dependency(GitClientDependency.self) private var gitClient
 
   var body: some View {
     Label {
@@ -39,15 +40,8 @@ private struct RepositoryLabel: View {
         avatarURL = nil
         return
       }
-      avatarURL = await Self.ownerAvatarURL(for: rootURL)
+      avatarURL = await GitHubOwnerAvatar.url(for: rootURL, gitClient: gitClient)
     }
-  }
-
-  private static func ownerAvatarURL(for rootURL: URL) async -> URL? {
-    guard let info = await GitClient().remoteInfo(for: rootURL) else {
-      return nil
-    }
-    return URL(string: "https://github.com/\(info.owner).png?size=64")
   }
 }
 
@@ -98,6 +92,8 @@ private struct SettingsSidebarView: View {
         .tag(SettingsSection.github)
       Label("Shortcuts", systemImage: "keyboard")
         .tag(SettingsSection.shortcuts)
+      Label("Global Scripts", systemImage: "terminal")
+        .tag(SettingsSection.scripts)
       Label("Updates", systemImage: "arrow.down.circle")
         .tag(SettingsSection.updates)
 
@@ -171,12 +167,22 @@ private struct SettingsDetailView: View {
       UpdatesSettingsView(settingsStore: settingsStore, updatesStore: updatesStore)
     case .github:
       GithubSettingsView(store: settingsStore)
+    case .scripts:
+      GlobalScriptsSettingsView(store: settingsStore)
+        .navigationTitle("Global Scripts")
     case .repository:
       if let repository = selectedRepositorySummary {
-        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
-          repositorySettingsStore in
+        if let repositorySettingsStore = settingsStore.scope(
+          state: \.repositorySettings,
+          action: \.repositorySettings
+        ) {
           RepositorySettingsView(store: repositorySettingsStore)
             .id(repository.id)
+            .navigationTitle(repository.name)
+        } else {
+          ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(repository.name)
         }
       } else {
@@ -187,10 +193,17 @@ private struct SettingsDetailView: View {
       }
     case .repositoryScripts:
       if let repository = selectedRepositorySummary {
-        IfLetStore(settingsStore.scope(state: \.repositorySettings, action: \.repositorySettings)) {
-          repositorySettingsStore in
+        if let repositorySettingsStore = settingsStore.scope(
+          state: \.repositorySettings,
+          action: \.repositorySettings
+        ) {
           RepositoryScriptsSettingsView(store: repositorySettingsStore)
             .id("\(repository.id)-scripts")
+            .navigationTitle("\(repository.name) — Scripts")
+        } else {
+          ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("\(repository.name) — Scripts")
         }
       } else {
@@ -228,8 +241,7 @@ struct SettingsView: View {
         settingsStore: settingsStore,
         expandedRepositories: $expandedRepositories
       )
-      .onChange(of: selection) { _, newSelection in
-        // Auto-expand the repository disclosure group when navigating to it.
+      .onChange(of: selection, initial: true) { _, newSelection in
         guard let repositoryID = newSelection.repositoryID else { return }
         expandedRepositories.insert(repositoryID)
       }
@@ -249,8 +261,7 @@ struct SettingsView: View {
       }
     }
     .navigationSplitViewStyle(.balanced)
-    .alert(store: settingsStore.scope(state: \.$alert, action: \.alert))
-    .alert(store: store.scope(state: \.$alert, action: \.alert))
+    .alert($settingsStore.scope(state: \.alert, action: \.alert))
     .frame(minWidth: 750, minHeight: 500)
     .onAppear {
       guard settingsStore.selection == nil else { return }

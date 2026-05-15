@@ -94,7 +94,7 @@ struct RepositoriesFeature {
     var pendingWorktrees: [PendingWorktree] = []
     var pendingSetupScriptWorktreeIDs: Set<Worktree.ID> = []
     var pendingTerminalFocusWorktreeIDs: Set<Worktree.ID> = []
-    var runningScriptsByWorktreeID: [Worktree.ID: [UUID: TerminalTabTintColor]] = [:]
+    var runningScriptsByWorktreeID: [Worktree.ID: [UUID: RepositoryColor]] = [:]
     var archivingWorktreeIDs: Set<Worktree.ID> = []
     var deleteScriptWorktreeIDs: Set<Worktree.ID> = []
     var deletingWorktreeIDs: Set<Worktree.ID> = []
@@ -230,7 +230,6 @@ struct RepositoriesFeature {
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
     case consumePendingSidebarReveal(Int)
-    case requestRenameBranch(Worktree.ID, String)
     case createRandomWorktree
     case createRandomWorktreeInRepository(Repository.ID)
     case createWorktreeInRepository(
@@ -676,41 +675,6 @@ struct RepositoriesFeature {
         guard state.pendingSidebarReveal?.id == pendingSidebarRevealID else { return .none }
         state.pendingSidebarReveal = nil
         return .none
-
-      case .requestRenameBranch(let worktreeID, let branchName):
-        guard let worktree = state.worktree(for: worktreeID) else { return .none }
-        let trimmed = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-          state.alert = messageAlert(
-            title: "Branch name required",
-            message: "Enter a branch name to rename."
-          )
-          return .none
-        }
-        guard !trimmed.contains(where: \.isWhitespace) else {
-          state.alert = messageAlert(
-            title: "Branch name invalid",
-            message: "Branch names can't contain spaces."
-          )
-          return .none
-        }
-        if trimmed == worktree.name {
-          return .none
-        }
-        analyticsClient.capture("branch_renamed", nil)
-        return .run { send in
-          do {
-            try await gitClient.renameBranch(worktree.workingDirectory, trimmed)
-            await send(.reloadRepositories(animated: true))
-          } catch {
-            await send(
-              .presentAlert(
-                title: "Unable to rename branch",
-                message: error.localizedDescription
-              )
-            )
-          }
-        }
 
       case .createRandomWorktree:
         guard let repository = repositoryForWorktreeCreation(state) else {
@@ -3183,8 +3147,7 @@ struct RepositoriesFeature {
           repositoryID: repositoryID,
           defaultName: repository.name,
           title: storedTitle,
-          color: storedColor,
-          customColor: storedColor?.color ?? .accentColor
+          color: storedColor
         )
         return .none
 
@@ -3769,10 +3732,10 @@ extension RepositoriesFeature.State {
   }
 
   /// Tint colors for scripts currently running in the given worktree,
-  /// ordered deterministically by script ID. The tint travels alongside
-  /// the running script ID so the color resolves correctly even when
-  /// the worktree belongs to a repository other than the selected one.
-  func runningScriptColors(for worktreeID: Worktree.ID) -> [TerminalTabTintColor] {
+  /// ordered deterministically by script ID. Snapshotted at run-time so a
+  /// live color edit only takes effect on the next run; this also keeps
+  /// the dot rendering when a script is deleted mid-run.
+  func runningScriptColors(for worktreeID: Worktree.ID) -> [RepositoryColor] {
     guard let tintsByID = runningScriptsByWorktreeID[worktreeID] else { return [] }
     return tintsByID.sorted(by: { $0.key < $1.key }).map(\.value)
   }

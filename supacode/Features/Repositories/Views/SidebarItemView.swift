@@ -5,7 +5,7 @@ struct SidebarItemView: View {
   let kind: SidebarItemModel.Kind
   let name: String
   let subtitle: String?
-  let worktreeColor: WorktreeColor
+  let accent: WorktreeAccent
   let isBusy: Bool
   let gitIconName: String
   let gitIconColor: AnyShapeStyle
@@ -15,17 +15,12 @@ struct SidebarItemView: View {
   let info: WorktreeInfoEntry?
   let pullRequestBadgeText: String?
   let showsPullRequestInfo: Bool
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   let shortcutHint: String?
   let checkBadgeState: CheckBadgeState?
-
-  enum WorktreeColor {
-    case `default`
-    case main
-    case pinned
-  }
 
   enum CheckBadgeState {
     case passing
@@ -63,7 +58,8 @@ struct SidebarItemView: View {
     hideSubtitle: Bool,
     hideSubtitleOnMatch: Bool,
     showsPullRequestInfo: Bool,
-    runningScriptColors: [TerminalTabTintColor],
+    runningScriptColors: [RepositoryColor],
+    runningAgents: [AgentPresenceManager.AgentInstance],
     isTaskRunning: Bool,
     showsNotificationIndicator: Bool,
     notifications: [WorktreeTerminalNotification],
@@ -76,14 +72,13 @@ struct SidebarItemView: View {
     self.info = row.info
     self.showsPullRequestInfo = showsPullRequestInfo
     self.runningScriptColors = runningScriptColors
+    self.runningAgents = runningAgents
     self.showsNotificationIndicator = showsNotificationIndicator
     self.notifications = notifications
     self.shortcutHint = shortcutHint
     self.isBusy = row.isArchiving || row.isDeleting || row.isPending || isTaskRunning
 
-    // Worktree color.
-    self.worktreeColor =
-      if row.isMainWorktree { .main } else if row.isPinned { .pinned } else { .default }
+    self.accent = row.accent
 
     // Folders have no branch / no PR — show the folder name alone,
     // ignore display-mode and PR computation entirely.
@@ -99,7 +94,7 @@ struct SidebarItemView: View {
 
     // Title and subtitle based on display mode.
     let branchName = row.name
-    let worktreeName = Self.worktreeName(for: row)
+    let worktreeName = row.sidebarDisplayName ?? "Default"
     let effectiveWorktreeName = worktreeName.isEmpty ? branchName : worktreeName
     switch displayMode {
     case .branchFirst:
@@ -164,26 +159,13 @@ struct SidebarItemView: View {
     }
   }
 
-  private static func worktreeName(for row: SidebarItemModel) -> String {
-    guard !row.isMainWorktree else { return "Default" }
-    if row.id.contains("/") {
-      let pathName = URL(fileURLWithPath: row.id).lastPathComponent
-      guard pathName.isEmpty else { return pathName }
-    }
-    if !row.detail.isEmpty, row.detail != "." {
-      let detailName = URL(fileURLWithPath: row.detail).lastPathComponent
-      guard detailName.isEmpty || detailName == "." else { return detailName }
-    }
-    return row.name
-  }
-
   var body: some View {
     Label {
       HStack(spacing: 8) {
         TitleView(
           name: name,
           subtitle: subtitle,
-          worktreeColor: worktreeColor,
+          accent: accent,
           isBusy: isBusy
         )
         Spacer(minLength: 0)
@@ -193,6 +175,7 @@ struct SidebarItemView: View {
           showsPullRequestInfo: showsPullRequestInfo,
           pullRequestBadgeText: pullRequestBadgeText,
           runningScriptColors: runningScriptColors,
+          runningAgents: runningAgents,
           showsNotificationIndicator: showsNotificationIndicator,
           notifications: notifications
         )
@@ -219,18 +202,9 @@ struct SidebarItemView: View {
 private struct TitleView: View {
   let name: String
   let subtitle: String?
-  let worktreeColor: SidebarItemView.WorktreeColor
+  let accent: WorktreeAccent
   let isBusy: Bool
   @Environment(\.backgroundProminence) private var backgroundProminence
-
-  private var resolvedWorktreeColor: AnyShapeStyle {
-    guard backgroundProminence != .increased else { return AnyShapeStyle(.secondary) }
-    return switch worktreeColor {
-    case .main: AnyShapeStyle(.yellow)
-    case .pinned: AnyShapeStyle(.orange)
-    case .default: AnyShapeStyle(.tertiary)
-    }
-  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -241,7 +215,7 @@ private struct TitleView: View {
       if let subtitle {
         Text(subtitle)
           .font(.footnote)
-          .foregroundStyle(resolvedWorktreeColor)
+          .foregroundStyle(accent.shapeStyle(emphasized: backgroundProminence == .increased))
           .lineLimit(1)
       }
     }
@@ -344,7 +318,8 @@ private struct TrailingView: View {
   let info: WorktreeInfoEntry?
   let showsPullRequestInfo: Bool
   let pullRequestBadgeText: String?
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
 
@@ -361,6 +336,9 @@ private struct TrailingView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .transition(.blurReplace)
+        }
+        if !runningAgents.isEmpty {
+          AgentAvatarGroupView(instances: runningAgents, size: 16)
         }
         StatusIndicator(
           runningScriptColors: runningScriptColors,
@@ -397,7 +375,7 @@ private struct DiffStatsView: View {
 // MARK: - Status indicator.
 
 private struct StatusIndicator: View {
-  let runningScriptColors: [TerminalTabTintColor]
+  let runningScriptColors: [RepositoryColor]
   let showsNotificationIndicator: Bool
   let notifications: [WorktreeTerminalNotification]
   @Environment(\.backgroundProminence) private var backgroundProminence
@@ -437,7 +415,7 @@ private struct StatusIndicator: View {
 /// colors when more than one script is running. Falls back to the
 /// single-color pulsing behavior when only one color is present.
 private struct MultiColorPingDot: View {
-  let colors: [TerminalTabTintColor]
+  let colors: [RepositoryColor]
   let isEmphasized: Bool
   let size: CGFloat
   let showsSolidCenter: Bool
@@ -446,7 +424,7 @@ private struct MultiColorPingDot: View {
   /// Unique, ordered colors derived from the input.
   private var uniqueColors: [Color] {
     guard !isEmphasized else { return [.primary] }
-    var seen = Set<TerminalTabTintColor>()
+    var seen = Set<RepositoryColor>()
     return colors.compactMap { tint in
       guard seen.insert(tint).inserted else { return nil }
       return tint.color

@@ -8,15 +8,18 @@ struct TerminalTabLabelView: View {
   let isHoveringClose: Bool
   let shortcutHint: String?
   let showsShortcutHint: Bool
+  let runningAgents: [AgentPresenceManager.AgentInstance]
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
+      if !runningAgents.isEmpty {
+        AgentAvatarGroupView(instances: runningAgents, size: 14)
+          .padding(.trailing, 2)
+      }
       if let icon = tab.icon {
         Image(systemName: icon)
           .imageScale(.small)
-          .foregroundStyle(
-            tab.tintColor?.color ?? (isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
-          )
+          .foregroundStyle(tab.tintColor?.color ?? TerminalTabBarColors.activeText)
           .frame(
             width: TerminalTabBarMetrics.closeButtonSize,
             height: TerminalTabBarMetrics.closeButtonSize
@@ -25,8 +28,9 @@ struct TerminalTabLabelView: View {
       }
       Text(tab.displayTitle)
         .font(.caption)
+        .fontWeight(isActive ? .semibold : .regular)
         .lineLimit(1)
-        .foregroundStyle(isActive ? TerminalTabBarColors.activeText : TerminalTabBarColors.inactiveText)
+        .foregroundStyle(TerminalTabBarColors.activeText)
         .shimmer(isActive: tab.isDirty)
       Spacer(minLength: TerminalTabBarMetrics.contentTrailingSpacing)
       ZStack {

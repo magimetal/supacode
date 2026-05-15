@@ -28,12 +28,14 @@ struct ContentView: View {
     NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          CodingAgentsSidebarCardView(store: store)
+        }
     } detail: {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
-    .environment(\.surfaceBackgroundOpacity, terminalManager.surfaceBackgroundOpacity())
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
     }
@@ -56,21 +58,21 @@ struct ContentView: View {
         )
       }
     }
-    .alert(store: repositoriesStore.scope(state: \.$alert, action: \.alert))
-    .alert(store: store.scope(state: \.$alert, action: \.alert))
+    .alert($repositoriesStore.scope(state: \.alert, action: \.alert))
+    .alert($store.scope(state: \.alert, action: \.alert))
     .sheet(
-      store: store.scope(state: \.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation)
+      item: $store.scope(state: \.deeplinkInputConfirmation, action: \.deeplinkInputConfirmation)
     ) { confirmationStore in
       DeeplinkInputConfirmationView(store: confirmationStore)
     }
     .sheet(
-      store: repositoriesStore.scope(state: \.$worktreeCreationPrompt, action: \.worktreeCreationPrompt)
+      item: $repositoriesStore.scope(state: \.worktreeCreationPrompt, action: \.worktreeCreationPrompt)
     ) { promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
     .sheet(
-      store: repositoriesStore.scope(
-        state: \.$repositoryCustomization,
+      item: $repositoriesStore.scope(
+        state: \.repositoryCustomization,
         action: \.repositoryCustomization
       )
     ) { customizationStore in
@@ -84,12 +86,19 @@ struct ContentView: View {
         items: CommandPaletteFeature.commandPaletteItems(
           from: store.repositories,
           ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
-          scripts: store.scripts,
+          scripts: store.allScripts,
           runningScriptIDs: store.runningScriptIDs
         )
       )
     }
     .background(WindowTabbingDisabler())
+    .background(WindowChromeObserver(runtime: terminalManager.ghosttyRuntime))
+    .navigationTitle(
+      WindowTitle.compute(
+        repositories: store.repositories,
+        terminalManager: terminalManager
+      )
+    )
   }
 
   private func toggleLeftSidebar() {
@@ -110,37 +119,4 @@ struct ContentView: View {
     store.send(.repositories(.revealSelectedWorktreeInSidebar))
   }
 
-}
-
-private struct SurfaceBackgroundOpacityKey: EnvironmentKey {
-  static let defaultValue: Double = 1
-}
-
-extension EnvironmentValues {
-  var surfaceBackgroundOpacity: Double {
-    get { self[SurfaceBackgroundOpacityKey.self] }
-    set { self[SurfaceBackgroundOpacityKey.self] = newValue }
-  }
-
-  var surfaceTopChromeBackgroundOpacity: Double {
-    get {
-      guard surfaceBackgroundOpacity < 1 else { return 1 }
-      let proportionalOpacity = surfaceBackgroundOpacity * 0.56
-      return max(0.36, min(proportionalOpacity, 0.62))
-    }
-    set {
-      surfaceBackgroundOpacity = newValue
-    }
-  }
-
-  var surfaceBottomChromeBackgroundOpacity: Double {
-    get {
-      guard surfaceBackgroundOpacity < 1 else { return 1 }
-      let proportionalOpacity = surfaceBackgroundOpacity * 0.78
-      return max(0.52, min(proportionalOpacity, 0.82))
-    }
-    set {
-      surfaceBackgroundOpacity = newValue
-    }
-  }
 }

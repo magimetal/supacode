@@ -47,52 +47,35 @@ nonisolated struct KiroSettingsInstaller {
     self.runKiroVersionCommand = runKiroVersionCommand
   }
 
-  func isInstalled(progress: Bool) -> Bool {
+  /// Install state for the unified hook map — see
+  /// `ClaudeSettingsInstaller.installState()` for rationale.
+  func installState() -> ComponentInstallState {
     let entries: [String: [JSONValue]]
     do {
-      entries =
-        try progress
-        ? KiroHookSettings.progressHookEntriesByEvent()
-        : KiroHookSettings.notificationHookEntriesByEvent()
+      entries = try KiroHookSettings.hooksByEvent()
     } catch {
-      Self.reportInvalidHookConfiguration(error, progress: progress)
-      return false
+      Self.reportInvalidHookConfiguration(error)
+      return .notInstalled
     }
-    return fileInstaller.containsMatchingHooks(
-      settingsURL: settingsURL,
-      hookEntriesByEvent: entries
-    )
+    return fileInstaller.installState(settingsURL: settingsURL, hookEntriesByEvent: entries)
   }
 
-  func installProgressHooks() async throws {
+  func installAllHooks() async throws {
+    // Version check happens inside `ensureDefaultAgentConfig`, which
+    // short-circuits when `kiro_default.json` already exists — avoids
+    // re-running `kiro --version` on every install when the user has
+    // already accepted a config from this Supacode build.
     try await ensureDefaultAgentConfig()
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.progressHookEntriesByEvent()
+      hookEntriesByEvent: try KiroHookSettings.hooksByEvent()
     )
   }
 
-  func installNotificationHooks() async throws {
-    try await ensureDefaultAgentConfig()
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.notificationHookEntriesByEvent()
-    )
-  }
-
-  func uninstallProgressHooks() throws {
-    guard fileManager.fileExists(atPath: settingsURL.path) else { return }
+  func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.progressHookEntriesByEvent()
-    )
-  }
-
-  func uninstallNotificationHooks() throws {
-    guard fileManager.fileExists(atPath: settingsURL.path) else { return }
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookEntriesByEvent: try KiroHookSettings.notificationHookEntriesByEvent()
+      hookEntriesByEvent: try KiroHookSettings.hooksByEvent()
     )
   }
 
@@ -261,10 +244,9 @@ nonisolated struct KiroSettingsInstaller {
     return ""
   }
 
-  private static func reportInvalidHookConfiguration(_ error: Error, progress: Bool) {
+  private static func reportInvalidHookConfiguration(_ error: Error) {
     #if DEBUG
-      assertionFailure(
-        "Kiro \(progress ? "progress" : "notification") hook configuration is invalid: \(error)")
+      assertionFailure("Kiro hook configuration is invalid: \(error)")
     #endif
   }
 

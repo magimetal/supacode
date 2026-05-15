@@ -1,15 +1,20 @@
 import Foundation
 import Testing
 
+@testable import SupacodeSettingsShared
 @testable import supacode
 
 @MainActor
 struct RepositoryColorTests {
-  @Test func parseAcceptsPredefinedNamesCaseInsensitively() {
-    #expect(RepositoryColor.parse("red") == .red)
+  @Test func parseIsCaseInsensitive() {
     #expect(RepositoryColor.parse("RED") == .red)
     #expect(RepositoryColor.parse("Blue") == .blue)
-    #expect(RepositoryColor.parse("purple") == .purple)
+  }
+
+  @Test func predefinedOrderingIsStable() {
+    #expect(
+      RepositoryColor.predefined == [.red, .orange, .yellow, .green, .teal, .blue, .purple]
+    )
   }
 
   @Test func parseAcceptsHexAndNormalizesCase() {
@@ -31,11 +36,34 @@ struct RepositoryColorTests {
     }
   }
 
-  @Test func encoderEmitsCanonicalRawValue() throws {
-    let predefined = try JSONEncoder().encode(RepositoryColor.green)
-    #expect(String(bytes: predefined, encoding: .utf8) == "\"green\"")
+  @Test(
+    arguments: [
+      (RepositoryColor.red, "red"),
+      (.orange, "orange"),
+      (.yellow, "yellow"),
+      (.green, "green"),
+      (.teal, "teal"),
+      (.blue, "blue"),
+      (.purple, "purple"),
+      (.custom("#A1B2C3"), "#A1B2C3"),
+    ]
+  )
+  func codableRoundTripsAllCases(color: RepositoryColor, rawValue: String) throws {
+    let encoded = try JSONEncoder().encode(color)
+    #expect(String(bytes: encoded, encoding: .utf8) == "\"\(rawValue)\"")
+    let decoded = try JSONDecoder().decode(RepositoryColor.self, from: encoded)
+    #expect(decoded == color)
+  }
 
-    let custom = try JSONEncoder().encode(RepositoryColor.custom("#A1B2C3"))
-    #expect(String(bytes: custom, encoding: .utf8) == "\"#A1B2C3\"")
+  /// `ScriptDefinition.tintColor` predates the `RepositoryColor` move; ensure
+  /// a settings file persisted before the move still decodes the lowercase
+  /// rawValue without a migration shim.
+  @Test func scriptDefinitionDecodesLegacyTintColorRawValue() throws {
+    let id = UUID()
+    let json = #"""
+      {"id":"\#(id.uuidString)","kind":"custom","name":"Lint","command":"make lint","tintColor":"green"}
+      """#
+    let decoded = try JSONDecoder().decode(ScriptDefinition.self, from: Data(json.utf8))
+    #expect(decoded.tintColor == .green)
   }
 }

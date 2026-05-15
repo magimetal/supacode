@@ -6,49 +6,14 @@ import Testing
 
 @MainActor
 struct AgentHookSocketServerTests {
-  // MARK: - Busy message parsing.
+  // MARK: - Legacy single-line text payload (no longer parsed).
 
-  @Test func parsesValidBusyActiveMessage() {
-    let worktreeID = "/tmp/repo/wt-1"
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "\(worktreeID) \(tabID.uuidString) \(surfaceID.uuidString) 1"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(let wID, let tID, let sID, let active) = message else {
-      Issue.record("Expected busy message, got \(String(describing: message))")
-      return
-    }
-    #expect(wID == worktreeID)
-    #expect(tID == tabID)
-    #expect(sID == surfaceID)
-    #expect(active == true)
-  }
-
-  @Test func parsesValidBusyInactiveMessage() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) 0"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(_, _, _, let active) = message else {
-      Issue.record("Expected busy message")
-      return
-    }
-    #expect(active == false)
-  }
-
-  @Test func nonZeroBusyFlagTreatedAsActive() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "wt \(tabID.uuidString) \(surfaceID.uuidString) anything"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy(_, _, _, let active) = message else {
-      Issue.record("Expected busy message")
-      return
-    }
-    #expect(active == true)
+  @Test func singleLineTextPayloadIsRejected() {
+    // The text-protocol busy message (`worktreeID tabID surfaceID 0|1`)
+    // was retired in favor of the JSON envelope. Any single-line text
+    // header now returns nil — exercises the new guard in `parse`.
+    let raw = "wt \(UUID().uuidString) \(UUID().uuidString) 1"
+    #expect(AgentHookSocketServer.parse(data: Data(raw.utf8)) == nil)
   }
 
   // MARK: - Notification message parsing.
@@ -198,14 +163,14 @@ struct AgentHookSocketServerTests {
 
   @Test func invalidTabIDReturnsNil() {
     let surfaceID = UUID()
-    let raw = "wt not-a-uuid \(surfaceID.uuidString) 1"
+    let raw = "wt not-a-uuid \(surfaceID.uuidString) claude\n{\"hook_event_name\":\"Stop\"}"
     let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
     #expect(message == nil)
   }
 
   @Test func invalidSurfaceIDReturnsNil() {
     let tabID = UUID()
-    let raw = "wt \(tabID.uuidString) not-a-uuid 1"
+    let raw = "wt \(tabID.uuidString) not-a-uuid claude\n{\"hook_event_name\":\"Stop\"}"
     let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
     #expect(message == nil)
   }
@@ -262,18 +227,6 @@ struct AgentHookSocketServerTests {
     #expect(message == nil)
   }
 
-  @Test func commandDoesNotInterfereWithBusyMessages() {
-    let tabID = UUID()
-    let surfaceID = UUID()
-    let raw = "/tmp/repo \(tabID.uuidString) \(surfaceID.uuidString) 1"
-    let message = AgentHookSocketServer.parse(data: Data(raw.utf8))
-
-    guard case .busy = message else {
-      Issue.record("Expected busy message, got \(String(describing: message))")
-      return
-    }
-  }
-
   // MARK: - Query message parsing.
 
   @Test func parsesValidQueryMessage() {
@@ -326,5 +279,140 @@ struct AgentHookSocketServerTests {
     }
 
     #expect(payload == nil)
+  }
+
+  // MARK: - Hook event JSON envelope.
+
+  @Test func parsesValidHookEventWithRequiredFieldsOnly() {
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message, got \(String(describing: message))")
+      return
+    }
+    #expect(event.event == "session_start")
+    #expect(event.eventName == .sessionStart)
+    #expect(event.agent == "claude")
+    #expect(event.surfaceID == surfaceID)
+    #expect(event.pid == nil)
+    #expect(event.data == nil)
+  }
+
+  @Test func parsesHookEventWithPidTimestampAndOpaqueData() {
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "notification",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "pid": 12345,
+        "ts": "2026-05-10T12:00:00Z",
+        "data": {"title": "Done", "message": "All good"}
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message")
+      return
+    }
+    #expect(event.pid == 12345)
+    #expect(event.timestamp != nil)
+
+    struct NotificationPayload: Decodable, Equatable {
+      let title: String
+      let message: String
+    }
+    let decoded = event.decodeData(NotificationPayload.self)
+    #expect(decoded == NotificationPayload(title: "Done", message: "All good"))
+  }
+
+  @Test func unknownEventNameKeepsRawStringButHasNilEventName() {
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "future_event_we_dont_know_yet",
+        "v": 1,
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event(let event) = message else {
+      Issue.record("Expected event message")
+      return
+    }
+    #expect(event.event == "future_event_we_dont_know_yet")
+    #expect(event.eventName == nil)
+  }
+
+  @Test func hookEventMissingSurfaceIDReturnsNil() {
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func hookEventWithMalformedSurfaceUUIDReturnsNil() {
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "not-a-uuid"
+      }
+      """
+    #expect(AgentHookSocketServer.parse(data: Data(json.utf8)) == nil)
+  }
+
+  @Test func eventDiscriminatorTakesPrecedenceOverDeeplinkInSamePayload() {
+    let surfaceID = UUID()
+    let json = """
+      {
+        "event": "session_start",
+        "agent": "claude",
+        "surface_id": "\(surfaceID.uuidString)",
+        "deeplink": "supacode://worktree/test"
+      }
+      """
+    let message = AgentHookSocketServer.parse(data: Data(json.utf8))
+
+    guard case .event = message else {
+      Issue.record("Expected event message, got \(String(describing: message))")
+      return
+    }
+  }
+
+  @Test func hookEventRejectsNonPositivePid() {
+    // `kill(0, 0)` succeeds for the caller's process group and `kill(-N, 0)`
+    // for group N, so a pid <= 0 in a session_start would pin a permanent
+    // badge in the liveness sweep. Decoder rejects them outright.
+    for badPid in ["0", "-1", "-12345"] {
+      let json = """
+        {
+          "event": "session_start",
+          "agent": "claude",
+          "surface_id": "\(UUID().uuidString)",
+          "pid": \(badPid)
+        }
+        """
+      #expect(
+        AgentHookSocketServer.parse(data: Data(json.utf8)) == nil,
+        "Expected nil for pid=\(badPid)"
+      )
+    }
   }
 }

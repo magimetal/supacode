@@ -11,93 +11,83 @@ public struct RepositoryScriptsSettingsView: View {
   }
 
   public var body: some View {
-    Form {
-      // Setup + Archive scripts are git-only — worktree creation
-      // and worktree archival are the triggers and folders have
-      // neither. The Delete script stays: it runs before the folder
-      // itself is removed from Supacode through the blocking-script
-      // pipeline.
-      if store.isGitRepository {
+    ScrollViewReader { proxy in
+      Form {
+        // Setup + Archive scripts are git-only — worktree creation
+        // and worktree archival are the triggers and folders have
+        // neither. The Delete script stays: it runs before the folder
+        // itself is removed from Supacode through the blocking-script
+        // pipeline.
+        if store.isGitRepository {
+          LifecycleScriptSection(
+            text: $store.settings.setupScript,
+            title: "Setup Script",
+            subtitle: "Runs once after worktree creation.",
+            icon: "truck.box.badge.clock",
+            iconColor: .blue,
+            footerExample: "pnpm install"
+          )
+          LifecycleScriptSection(
+            text: $store.settings.archiveScript,
+            title: "Archive Script",
+            subtitle: "Runs before a worktree is archived.",
+            icon: "archivebox",
+            iconColor: .orange,
+            footerExample: "docker compose down"
+          )
+        }
         LifecycleScriptSection(
-          text: Binding(
-            get: { store.settings.setupScript },
-            set: { store.send(.setSetupScript($0)) }
-          ),
-          title: "Setup Script",
-          subtitle: "Runs once after worktree creation.",
-          icon: "truck.box.badge.clock",
-          iconColor: .blue,
-          footerExample: "pnpm install"
-        )
-        LifecycleScriptSection(
-          text: Binding(
-            get: { store.settings.archiveScript },
-            set: { store.send(.setArchiveScript($0)) }
-          ),
-          title: "Archive Script",
-          subtitle: "Runs before a worktree is archived.",
-          icon: "archivebox",
-          iconColor: .orange,
+          text: $store.settings.deleteScript,
+          title: "Delete Script",
+          subtitle: store.isGitRepository
+            ? "Runs before a worktree is deleted."
+            : "Runs before this folder is removed from Supacode.",
+          icon: "trash",
+          iconColor: .red,
           footerExample: "docker compose down"
         )
-      }
-      LifecycleScriptSection(
-        text: Binding(
-          get: { store.settings.deleteScript },
-          set: { store.send(.setDeleteScript($0)) }
-        ),
-        title: "Delete Script",
-        subtitle: store.isGitRepository
-          ? "Runs before a worktree is deleted."
-          : "Runs before this folder is removed from Supacode.",
-        icon: "trash",
-        iconColor: .red,
-        footerExample: "docker compose down"
-      )
 
-      // User-defined scripts, each in its own section.
-      ForEach(store.settings.scripts) { script in
-        let scriptName = Binding(
-          get: {
-            store.settings.scripts.first(where: { $0.id == script.id })?.name ?? script.name
-          },
-          set: { store.send(.setScriptName(script.id, $0)) }
-        )
-        let scriptCommand = Binding(
-          get: {
-            store.settings.scripts.first(where: { $0.id == script.id })?.command ?? script.command
-          },
-          set: { store.send(.setScriptCommand(script.id, $0)) }
-        )
-        Section {
-          if script.kind == .custom {
-            TextField("Name", text: scriptName)
+        // User-defined scripts, each in its own section.
+        ForEach($store.settings.scripts) { $script in
+          Section {
+            if script.kind == .custom {
+              TextField("Name", text: $script.name)
+              LabeledContent("Color") {
+                ColorSwatchRow(color: $script.tintColor)
+              }
+            }
+            ScriptCommandEditor(text: $script.command, label: script.displayName)
+            Button("Remove Script…", role: .destructive) {
+              store.send(.removeScript(script.id))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.red)
+            .help("Remove this script.")
+          } header: {
+            Label {
+              Text("\(script.displayName) Script")
+                .font(.body)
+                .bold()
+            } icon: {
+              Image(systemName: script.resolvedSystemImage).foregroundStyle(script.resolvedTintColor.color)
+                .accessibilityHidden(true)
+            }.labelStyle(.verticallyCentered)
           }
-          ScriptCommandEditor(text: scriptCommand, label: script.displayName)
-          Button("Remove Script…", role: .destructive) {
-            store.send(.removeScript(script.id))
-          }
-          .buttonStyle(.plain)
-          .foregroundStyle(.red)
-          .help("Remove this script.")
-        } header: {
-          Label {
-            Text("\(script.displayName) Script")
-              .font(.body)
-              .bold()
-          } icon: {
-            Image(systemName: script.resolvedSystemImage).foregroundStyle(script.resolvedTintColor.color)
-              .accessibilityHidden(true)
-          }.labelStyle(.verticallyCentered)
+          .id(script.id)
         }
       }
-
+      .alert($store.scope(state: \.alert, action: \.alert))
+      .formStyle(.grouped)
+      .padding(.top, -20)
+      .padding(.leading, -8)
+      .padding(.trailing, -6)
+      // Mirror `GlobalScriptsSettingsView` — scroll the new section into view
+      // so an add gives feedback when the form already overflows.
+      .onChange(of: store.settings.scripts.count) { oldCount, newCount in
+        guard newCount > oldCount, let last = store.settings.scripts.last else { return }
+        withAnimation { proxy.scrollTo(last.id, anchor: .top) }
+      }
     }
-    .alert($store.scope(state: \.alert, action: \.alert))
-    .formStyle(.grouped)
-    .padding(.top, -20)
-    .padding(.leading, -8)
-    .padding(.trailing, -6)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         let usedKinds = Set(store.settings.scripts.map(\.kind))
@@ -122,6 +112,7 @@ public struct RepositoryScriptsSettingsView: View {
         .help("Add a new script.")
       }
     }
+    .dismissSystemColorPanelOnDisappear()
   }
 }
 
@@ -155,20 +146,5 @@ private struct LifecycleScriptSection: View {
     } footer: {
       Text("e.g., `\(footerExample)`")
     }
-  }
-}
-
-/// Monospaced text editor for script commands.
-private struct ScriptCommandEditor: View {
-  @Binding var text: String
-  let label: String
-
-  var body: some View {
-    TextEditor(text: $text)
-      .monospaced()
-      .textEditorStyle(.plain)
-      .autocorrectionDisabled()
-      .frame(height: 90)
-      .accessibilityLabel(label)
   }
 }

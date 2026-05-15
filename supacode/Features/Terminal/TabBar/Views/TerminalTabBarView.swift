@@ -1,10 +1,10 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabBarView: View {
   @Bindable var manager: TerminalTabManager
   let createTab: () -> Void
-  let splitHorizontally: () -> Void
-  let splitVertically: () -> Void
+  let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
   let closeTab: (TerminalTabID) -> Void
   let closeOthers: (TerminalTabID) -> Void
@@ -12,8 +12,9 @@ struct TerminalTabBarView: View {
   let closeAll: () -> Void
   let renameTab: (TerminalTabID, String) -> Void
   let hasNotification: (TerminalTabID) -> Bool
+  let runningAgents: (TerminalTabID) -> [AgentPresenceManager.AgentInstance]
   @Environment(\.controlActiveState)
-  private var activeState
+  private var controlActiveState
 
   var body: some View {
     HStack(spacing: 0) {
@@ -24,19 +25,18 @@ struct TerminalTabBarView: View {
         closeToRight: closeToRight,
         closeAll: closeAll,
         renameTab: renameTab,
-        hasNotification: hasNotification
+        hasNotification: hasNotification,
+        runningAgents: runningAgents
       )
       Spacer(minLength: 0)
       TerminalTabBarTrailingAccessories(
         createTab: createTab,
-        splitHorizontally: splitHorizontally,
-        splitVertically: splitVertically,
+        split: split,
         canSplit: canSplit
       )
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
-    .background(TerminalTabBarBackground())
-    .saturation(activeState == .inactive ? 0 : 1)
+    .saturation(controlActiveState == .inactive ? 0 : 1)
     .clipped()
   }
 }

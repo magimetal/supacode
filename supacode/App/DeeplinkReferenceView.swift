@@ -107,9 +107,13 @@ struct DeeplinkReferenceView: View {
     .init(
       url: "supacode://settings/<section>",
       description: "Open a specific section.",
-      params: "general|notifications|worktrees|developer|shortcuts|updates|github"
+      params: "general|notifications|worktrees|developer|shortcuts|scripts|updates|github"
     ),
     .init(url: "supacode://settings/repo/<repo_id>", description: "Open repository settings."),
+    .init(
+      url: "supacode://settings/repo/<repo_id>/scripts",
+      description: "Open repository Scripts settings."
+    ),
   ]
 }
 
@@ -147,17 +151,6 @@ private struct DeeplinkSection: View {
         }
       }
     }
-  }
-}
-
-struct DeeplinkReferenceMenuButton: View {
-  @Environment(\.openWindow) private var openWindow
-
-  var body: some View {
-    Button("Deeplink Reference") {
-      openWindow(id: WindowID.deeplinkReference)
-    }
-    .help("Open the deeplink reference.")
   }
 }
 

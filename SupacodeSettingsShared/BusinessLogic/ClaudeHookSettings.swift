@@ -1,20 +1,11 @@
 import Foundation
 
 nonisolated enum ClaudeHookSettings {
-  fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
-  fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
-  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "claude")
-
-  static func progressHookGroupsByEvent() throws -> [String: [JSONValue]] {
+  /// Canonical hook map for Claude. One composite command per (event,
+  /// matcher) slot keeps the prune-and-replace cycle idempotent.
+  static func hooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
-      from: ClaudeProgressPayload(),
-      invalidConfiguration: ClaudeHookSettingsError.invalidConfiguration
-    )
-  }
-
-  static func notificationHookGroupsByEvent() throws -> [String: [JSONValue]] {
-    try AgentHookPayloadSupport.extractHookGroups(
-      from: ClaudeNotificationPayload(),
+      from: ClaudeHooksPayload(),
       invalidConfiguration: ClaudeHookSettingsError.invalidConfiguration
     )
   }
@@ -24,38 +15,54 @@ nonisolated enum ClaudeHookSettingsError: Error {
   case invalidConfiguration
 }
 
-// MARK: - Progress hooks.
+// MARK: - Hook payload.
 
-// UserPromptSubmit sets busy, Stop/SessionEnd/PostToolUseFailure clears it.
-private nonisolated struct ClaudeProgressPayload: Encodable {
+// Atomic state-set: every Pre/PostToolUse fires `busy`; AskUserQuestion /
+// ExitPlanMode / Notification overwrite to `awaitingInput`; Stop and
+// SessionEnd reset to `idle`. The pid liveness sweep is the safety net
+// for crashed turns.
+private nonisolated struct ClaudeHooksPayload: Encodable {
+  static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
+
+  private static let busy = AgentHookSettingsCommand.compositeCommand(
+    events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+  private static let awaitingInputAndNotify = AgentHookSettingsCommand.compositeCommand(
+    events: [.awaitingInput], forwardStdinAsNotification: true, agent: .claude)
+  private static let awaitingInput = AgentHookSettingsCommand.compositeCommand(
+    events: [.awaitingInput], forwardStdinAsNotification: false, agent: .claude)
+  private static let idleAndNotify = AgentHookSettingsCommand.compositeCommand(
+    events: [.idle], forwardStdinAsNotification: true, agent: .claude)
+  private static let sessionStart = AgentHookSettingsCommand.compositeCommand(
+    events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude)
+  private static let sessionEndAndIdle = AgentHookSettingsCommand.compositeCommand(
+    events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .claude)
+
   let hooks: [String: [AgentHookGroup]] = [
+    "SessionStart": [
+      .init(hooks: [.init(command: Self.sessionStart, timeout: 5)])
+    ],
     "UserPromptSubmit": [
-      .init(hooks: [
-        .init(command: ClaudeHookSettings.busyOn, timeout: 10)
-      ])
+      .init(hooks: [.init(command: Self.busy, timeout: 10)])
     ],
-    "Stop": [
-      .init(hooks: [.init(command: ClaudeHookSettings.busyOff, timeout: 10)])
+    "PreToolUse": [
+      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)]),
+      // Array-order: matched-by-name fires AFTER matcher-"", so awaiting wins.
+      .init(
+        matcher: Self.awaitingInputToolMatcher,
+        hooks: [.init(command: Self.awaitingInput, timeout: 5)]
+      ),
     ],
-    "PostToolUseFailure": [
-      .init(hooks: [.init(command: ClaudeHookSettings.busyOff, timeout: 5)])
-    ],
-    "SessionEnd": [
-      .init(matcher: "", hooks: [.init(command: ClaudeHookSettings.busyOff, timeout: 1)])
-    ],
-  ]
-}
-
-// MARK: - Notification hooks.
-
-// Stop forwards lastAssistantMessage, Notification forwards message/title.
-private nonisolated struct ClaudeNotificationPayload: Encodable {
-  let hooks: [String: [AgentHookGroup]] = [
-    "Stop": [
-      .init(hooks: [.init(command: ClaudeHookSettings.notify, timeout: 10)])
+    "PostToolUse": [
+      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5)])
     ],
     "Notification": [
-      .init(matcher: "", hooks: [.init(command: ClaudeHookSettings.notify, timeout: 10)])
+      .init(matcher: "", hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10)])
+    ],
+    "Stop": [
+      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10)])
+    ],
+    "SessionEnd": [
+      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5)])
     ],
   ]
 }

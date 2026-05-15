@@ -1,20 +1,12 @@
 import Foundation
 
 nonisolated enum CodexHookSettings {
-  fileprivate static let busyOn = AgentHookSettingsCommand.busyCommand(active: true)
-  fileprivate static let busyOff = AgentHookSettingsCommand.busyCommand(active: false)
-  fileprivate static let notify = AgentHookSettingsCommand.notificationCommand(agent: "codex")
-
-  static func progressHookGroupsByEvent() throws -> [String: [JSONValue]] {
+  /// Single canonical hook map for Codex. See `ClaudeHookSettings` for the
+  /// composite-command rationale (one Supacode-managed entry per slot →
+  /// idempotent prune-and-replace).
+  static func hooksByEvent() throws -> [String: [JSONValue]] {
     try AgentHookPayloadSupport.extractHookGroups(
-      from: CodexProgressPayload(),
-      invalidConfiguration: CodexHookSettingsError.invalidConfiguration
-    )
-  }
-
-  static func notificationHookGroupsByEvent() throws -> [String: [JSONValue]] {
-    try AgentHookPayloadSupport.extractHookGroups(
-      from: CodexNotificationPayload(),
+      from: CodexHooksPayload(),
       invalidConfiguration: CodexHookSettingsError.invalidConfiguration
     )
   }
@@ -24,30 +16,32 @@ nonisolated enum CodexHookSettingsError: Error {
   case invalidConfiguration
 }
 
-// MARK: - Progress hooks.
+// MARK: - Hook payload.
 
-// Codex fires UserPromptSubmit, Stop, PreToolUse (Bash), and SessionStart.
-// Only Submit/Stop are used for busy tracking.
-private nonisolated struct CodexProgressPayload: Encodable {
+// Turn-level activity only — Codex doesn't expose PreToolUse/PostToolUse
+// at a useful granularity (Bash-only), so a single `busy` at submit and
+// a single `idle` + notify at stop is the cleanest model. SessionStart
+// fires on the first turn rather than on session open (openai/codex#15266)
+// — the badge appears once the user submits a prompt. Codex has no
+// SessionEnd, so the badge clears via the pid liveness sweep when Codex
+// exits.
+private nonisolated struct CodexHooksPayload: Encodable {
+  private static let busy = AgentHookSettingsCommand.compositeCommand(
+    events: [.busy], forwardStdinAsNotification: false, agent: .codex)
+  private static let idleAndNotify = AgentHookSettingsCommand.compositeCommand(
+    events: [.idle], forwardStdinAsNotification: true, agent: .codex)
+  private static let sessionStart = AgentHookSettingsCommand.compositeCommand(
+    events: [.sessionStart], forwardStdinAsNotification: false, agent: .codex)
+
   let hooks: [String: [AgentHookGroup]] = [
+    "SessionStart": [
+      .init(hooks: [.init(command: Self.sessionStart, timeout: 5)])
+    ],
     "UserPromptSubmit": [
-      .init(hooks: [
-        .init(command: CodexHookSettings.busyOn, timeout: 10)
-      ])
+      .init(hooks: [.init(command: Self.busy, timeout: 10)])
     ],
     "Stop": [
-      .init(hooks: [.init(command: CodexHookSettings.busyOff, timeout: 10)])
+      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10)])
     ],
-  ]
-}
-
-// MARK: - Notification hooks.
-
-// Codex only supports Stop for meaningful notification content.
-private nonisolated struct CodexNotificationPayload: Encodable {
-  let hooks: [String: [AgentHookGroup]] = [
-    "Stop": [
-      .init(hooks: [.init(command: CodexHookSettings.notify, timeout: 10)])
-    ]
   ]
 }

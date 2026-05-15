@@ -24,7 +24,8 @@ struct AppFeature {
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
-    var scripts: [ScriptDefinition] = []
+    var repoScripts: [ScriptDefinition] = []
+    var globalScripts: [ScriptDefinition] = []
     var notificationIndicatorCount: Int = 0
     var lastKnownSystemNotificationsEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
@@ -39,11 +40,27 @@ struct AppFeature {
       self.repositories = repositories
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+      // Seed from settings so `state.allScripts` doesn't start empty before the
+      // first `settingsChanged` delegate fires. Globals aren't worktree-scoped,
+      // so deselection (line below in `selectedWorktreeChanged(nil)`)
+      // intentionally does not clear them.
+      globalScripts = settings.globalScripts
+    }
+
+    /// Repo scripts followed by global scripts; repo wins on ID collisions.
+    var allScripts: [ScriptDefinition] {
+      .merged(repo: repoScripts, global: globalScripts)
+    }
+
+    /// Canonical script for `id` honoring "repo wins on collision". Returns
+    /// `nil` if the script was deleted between palette / view binding and dispatch.
+    func resolveScript(id: UUID) -> ScriptDefinition? {
+      allScripts.first { $0.id == id }
     }
 
     /// The script that the primary toolbar button should run.
     var primaryScript: ScriptDefinition? {
-      scripts.primaryScript
+      allScripts.primaryScript
     }
 
     /// Running script IDs for the currently selected worktree.
@@ -57,7 +74,7 @@ struct AppFeature {
 
     /// Whether any `.run`-kind script is currently running in the selected worktree.
     var hasRunningRunScript: Bool {
-      scripts.hasRunningRunScript(in: runningScriptIDs)
+      allScripts.hasRunningRunScript(in: runningScriptIDs)
     }
   }
 
@@ -77,6 +94,7 @@ struct AppFeature {
     case requestQuit
     case newTerminal
     case newBrowserTab
+    case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
     case runScript
     case runNamedScript(ScriptDefinition)
@@ -104,6 +122,7 @@ struct AppFeature {
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
+  @Dependency(AppLifecycleClient.self) private var appLifecycleClient
   @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
@@ -142,6 +161,10 @@ struct AppFeature {
           analyticsClient.capture("app_activated", nil)
           return .merge(
             .send(.repositories(.refreshWorktrees)),
+            // Re-probe agent integrations on activation so the sidebar
+            // card reflects external installs (e.g. `claude install`)
+            // for users who keep the app open across days.
+            .send(.settings(.refreshAgentIntegrationStates)),
             .run { send in
               while !Task.isCancelled {
                 try? await ContinuousClock().sleep(for: .seconds(30))
@@ -161,7 +184,7 @@ struct AppFeature {
         let lastFocusedWorktreeID = worktree?.id
         guard let worktree else {
           state.openActionSelection = .finder
-          state.scripts = []
+          state.repoScripts = []
           // Selecting the archived list must NOT overwrite the last
           // focused live worktree — preserve `focusedWorktreeID` so
           // returning from archives restores the prior row.
@@ -220,7 +243,7 @@ struct AppFeature {
           .filter { ids.contains($0.key) }
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
-          scripts: state.scripts
+          scripts: state.allScripts
         )
         let worktrees = state.repositories.worktreesForInfoWatcher()
         var effects: [Effect<Action>] = [
@@ -288,6 +311,9 @@ struct AppFeature {
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+        // Compare IDs as a set — name/command edits and pure reorders should not re-prune recency.
+        let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
+        state.globalScripts = settings.globalScripts
         if let selectedWorktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) {
           let rootURL = selectedWorktree.repositoryRootURL
           @Shared(.repositorySettings(rootURL)) var repositorySettings
@@ -296,28 +322,12 @@ struct AppFeature {
             defaultEditorID: settings.defaultEditorID
           )
         }
-        return .merge(
+        var effects: [Effect<Action>] = [
           .send(.repositories(.setGithubIntegrationEnabled(settings.githubIntegrationEnabled))),
+          .send(.repositories(.setMergedWorktreeAction(settings.mergedWorktreeAction))),
+          .send(.repositories(.setMoveNotifiedWorktreeToTop(settings.moveNotifiedWorktreeToTop))),
           .send(
-            .repositories(
-              .setMergedWorktreeAction(
-                settings.mergedWorktreeAction
-              )
-            )
-          ),
-          .send(
-            .repositories(
-              .setMoveNotifiedWorktreeToTop(
-                settings.moveNotifiedWorktreeToTop
-              )
-            )
-          ),
-          .send(
-            .repositories(
-              .setAutoDeleteArchivedWorktreesAfterDays(
-                settings.autoDeleteArchivedWorktreesAfterDays
-              )
-            )
+            .repositories(.setAutoDeleteArchivedWorktreesAfterDays(settings.autoDeleteArchivedWorktreesAfterDays))
           ),
           .send(
             .updates(
@@ -355,8 +365,12 @@ struct AppFeature {
             case .denied:
               await send(.systemNotificationsPermissionFailed(errorMessage: "Authorization status is denied."))
             }
-          }
-        )
+          },
+        ]
+        if globalScriptIDsChanged {
+          effects.append(pruneScriptRecencyEffect(state: state))
+        }
+        return .merge(effects)
 
       case .openActionSelectionChanged(let action):
         state.openActionSelection = action
@@ -400,36 +414,28 @@ struct AppFeature {
         return .none
 
       case .requestQuit:
-        let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
-        #if !DEBUG
-          guard state.settings.confirmBeforeQuit else {
-            analyticsClient.capture("app_quit", nil)
-            return .concatenate(
-              pendingFDEffect,
-              .run { @MainActor _ in
-                NSApplication.shared.terminate(nil)
-              })
-          }
-          state.alert = AlertState {
-            TextState("Quit Supacode?")
-          } actions: {
-            ButtonState(action: .confirmQuit) {
-              TextState("Quit")
-            }
-            ButtonState(role: .cancel, action: .dismiss) {
-              TextState("Cancel")
-            }
-          } message: {
-            TextState("This will close all terminal sessions.")
-          }
-          return pendingFDEffect
-        #else
+        guard state.settings.confirmBeforeQuit else {
+          analyticsClient.capture("app_quit", nil)
+          let pendingFDEffect = drainPendingResponseFD(state: &state, error: "Supacode is quitting.")
           return .concatenate(
             pendingFDEffect,
-            .run { @MainActor _ in
-              NSApplication.shared.terminate(nil)
-            })
-        #endif
+            .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
+          )
+        }
+        state.alert = AlertState {
+          TextState("Quit Supacode?")
+        } actions: {
+          ButtonState(action: .confirmQuit) {
+            TextState("Quit")
+          }
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("This will close all terminal sessions.")
+        }
+        // Surface the main window first; the alert is bound there.
+        return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
 
       case .newTerminal:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -448,6 +454,14 @@ struct AppFeature {
         analyticsClient.capture("browser_tab_created", nil)
         return .run { _ in
           await terminalClient.send(.createBrowserTab(worktree, initialURL: nil))
+        }
+
+      case .splitTerminal(let direction):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
         }
 
       case .jumpToLatestUnread:
@@ -478,23 +492,39 @@ struct AppFeature {
       case .runScript:
         // Find the selected or primary script and run it.
         guard let definition = state.primaryScript else {
-          // No scripts configured — open repository scripts settings.
           guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
             return .none
+          }
+          // Globals-only setup → land on the global pane the user actually configured.
+          if state.repoScripts.isEmpty, !state.globalScripts.isEmpty {
+            return .send(.settings(.setSelection(.scripts)))
           }
           let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
           return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
         }
         return .send(.runNamedScript(definition))
 
-      case .runNamedScript(let definition):
+      case .runNamedScript(let incoming):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
           return .none
         }
+        // Re-resolve so a stale view binding can't bypass repo-wins or run a since-deleted script.
+        guard let definition = state.resolveScript(id: incoming.id) else { return .none }
         // Prevent running the same script twice.
         guard !state.runningScriptIDs.contains(definition.id) else { return .none }
         let trimmed = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .none }
+        guard !trimmed.isEmpty else {
+          // Empty-command resolve (only reachable today via the palette's "Configure: …"
+          // entry) — route to the right settings pane so the user can finish setup.
+          let isGlobal =
+            state.globalScripts.contains { $0.id == definition.id }
+            && !state.repoScripts.contains { $0.id == definition.id }
+          if isGlobal {
+            return .send(.settings(.setSelection(.scripts)))
+          }
+          let repositoryID = worktree.repositoryRootURL.path(percentEncoded: false)
+          return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+        }
         analyticsClient.capture("script_run", ["kind": definition.kind.rawValue])
         var ids = state.repositories.runningScriptsByWorktreeID[worktree.id] ?? [:]
         ids[definition.id] = definition.resolvedTintColor
@@ -600,7 +630,7 @@ struct AppFeature {
           settings.openActionID,
           defaultEditorID: normalizedDefaultEditorID
         )
-        state.scripts = settings.scripts
+        state.repoScripts = settings.scripts
         return .none
 
       case .deeplinkReceived(let url, let source, let responseFD):
@@ -672,9 +702,8 @@ struct AppFeature {
         state.alert = nil
         return .concatenate(
           pendingFDEffect,
-          .run { @MainActor _ in
-            NSApplication.shared.terminate(nil)
-          })
+          .run { @MainActor [appLifecycleClient] _ in appLifecycleClient.terminate() },
+        )
 
       case .alert:
         return .none
@@ -820,7 +849,7 @@ struct AppFeature {
         // it won't appear here. That is intentional — the terminal
         // tab stays open and cleans up on natural completion or when
         // the user closes the tab manually.
-        guard let definition = state.scripts.first(where: { $0.id == scriptID }) else {
+        guard let definition = state.allScripts.first(where: { $0.id == scriptID }) else {
           return .none
         }
         return .send(.stopScript(definition))
@@ -962,19 +991,7 @@ struct AppFeature {
   ) -> Effect<Action> {
     switch deeplink {
     case .open:
-      return .run { @MainActor _ in
-        let app = NSApplication.shared
-        guard let window = app.windows.first(where: { $0.identifier?.rawValue == WindowID.main })
-        else {
-          app.activate()
-          return
-        }
-        if window.isMiniaturized {
-          window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        app.activate()
-      }
+      return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
     case .help:
       state.isDeeplinkReferenceRequested = true
       return .none
@@ -987,15 +1004,7 @@ struct AppFeature {
     case .repoWorktreeNew(let repositoryID, let branch, let baseRef, let fetchOrigin):
       guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found: \(repositoryID)")
-        state.alert = AlertState {
-          TextState("Repository not found")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
-          }
-        } message: {
-          TextState("No repository matching the deeplink could be found.")
-        }
+        state.alert = repositoryNotFoundAlert()
         return .none
       }
       // Worktree creation is git-only. Reject the deeplink with a
@@ -1034,15 +1043,7 @@ struct AppFeature {
     case .settingsRepo(let repositoryID):
       guard let repository = state.repositories.repositories[id: repositoryID] else {
         deeplinkLogger.warning("Repository not found for settings deeplink: \(repositoryID)")
-        state.alert = AlertState {
-          TextState("Repository not found")
-        } actions: {
-          ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
-          }
-        } message: {
-          TextState("No repository matching the deeplink could be found.")
-        }
+        state.alert = repositoryNotFoundAlert()
         return .none
       }
       // Folders have no general settings pane — send them to the
@@ -1050,6 +1051,13 @@ struct AppFeature {
       let section: SettingsSection =
         repository.isGitRepository ? .repository(repositoryID) : .repositoryScripts(repositoryID)
       return .send(.settings(.setSelection(section)))
+    case .settingsRepoScripts(let repositoryID):
+      guard state.repositories.repositories[id: repositoryID] != nil else {
+        deeplinkLogger.warning("Repository not found for settings repo scripts deeplink: \(repositoryID)")
+        state.alert = repositoryNotFoundAlert()
+        return .none
+      }
+      return .send(.settings(.setSelection(.repositoryScripts(repositoryID))))
     }
   }
 
@@ -1273,15 +1281,12 @@ struct AppFeature {
     bypassConfirmation: Bool,
     responseFD: Int32?
   ) -> Effect<Action> {
-    // Read the target worktree's scripts directly so cross-worktree
-    // deeplinks do not depend on the currently selected worktree's
-    // `state.scripts`, which may still reflect an older selection.
+    // Read scripts from storage so cross-worktree deeplinks are selection-agnostic.
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
       state.alert = worktreeNotFoundAlert()
       return .none
     }
-    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
-    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+    guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
         message: "No script matching the deeplink could be found. It may have been removed."
@@ -1330,12 +1335,12 @@ struct AppFeature {
     scriptID: UUID,
     state: inout State
   ) -> Effect<Action> {
+    // Read scripts from storage so cross-worktree deeplinks are selection-agnostic.
     guard let worktree = state.repositories.worktree(for: worktreeID) else {
       state.alert = worktreeNotFoundAlert()
       return .none
     }
-    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
-    guard let definition = repositorySettings.scripts.first(where: { $0.id == scriptID }) else {
+    guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
         message: "No script matching the deeplink could be found. It may have been removed."
@@ -1354,6 +1359,26 @@ struct AppFeature {
     return .run { _ in
       await terminalClient.send(.stopScript(worktree, definitionID: scriptID))
     }
+  }
+
+  private func pruneScriptRecencyEffect(state: State) -> Effect<Action> {
+    let ids = CommandPaletteFeature.recencyRetentionIDs(
+      from: state.repositories.repositories,
+      scripts: state.allScripts
+    )
+    return .send(.commandPalette(.pruneRecency(ids)))
+  }
+
+  /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
+  /// Repo entries win when both buckets carry the same ID.
+  private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
+    @SharedReader(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+    @SharedReader(.settingsFile) var settingsFile
+    let merged: [ScriptDefinition] = .merged(
+      repo: repositorySettings.scripts,
+      global: settingsFile.global.globalScripts,
+    )
+    return merged.first(where: { $0.id == scriptID })
   }
 
   private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
@@ -1377,6 +1402,18 @@ struct AppFeature {
       }
     } message: {
       TextState("No worktree matching the deeplink could be found. It may have been removed.")
+    }
+  }
+
+  private func repositoryNotFoundAlert() -> AlertState<Alert> {
+    AlertState {
+      TextState("Repository not found")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState("No repository matching the deeplink could be found.")
     }
   }
 
@@ -1614,8 +1651,9 @@ struct AppFeature {
       case .general: .general
       case .notifications: .notifications
       case .worktrees: .worktree
-      case .developer, .codingAgents: .developer
+      case .developer: .developer
       case .shortcuts: .shortcuts
+      case .scripts: .scripts
       case .updates: .updates
       case .github: .github
       }

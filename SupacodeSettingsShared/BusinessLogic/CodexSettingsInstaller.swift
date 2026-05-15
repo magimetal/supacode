@@ -1,6 +1,8 @@
 import Darwin
 import Foundation
 
+private nonisolated let codexInstallerLogger = SupaLogger("Settings")
+
 nonisolated struct CodexSettingsInstaller {
   struct CommandResult: Equatable, Sendable {
     let status: Int32
@@ -32,57 +34,176 @@ nonisolated struct CodexSettingsInstaller {
     self.runEnableHooksCommand = runEnableHooksCommand
   }
 
-  func isInstalled(progress: Bool) -> Bool {
+  /// Install state for the unified hook map — see
+  /// `ClaudeSettingsInstaller.installState()` for rationale.
+  func installState() -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
-      groups =
-        try progress
-        ? CodexHookSettings.progressHookGroupsByEvent()
-        : CodexHookSettings.notificationHookGroupsByEvent()
+      groups = try CodexHookSettings.hooksByEvent()
     } catch {
-      Self.reportInvalidHookConfiguration(error, progress: progress)
-      return false
+      Self.reportInvalidHookConfiguration(error)
+      return .notInstalled
     }
-    return fileInstaller.containsMatchingHooks(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: groups
-    )
+    let hooksState = fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
+    let featuresState = featuresConfigState()
+    switch (hooksState, featuresState) {
+    case (.installed, .upToDate): return .installed
+    case (.notInstalled, .absent): return .notInstalled
+    default: return .outdated
+    }
   }
 
-  func installProgressHooks() async throws {
+  func installAllHooks() async throws {
     try await enableHooksFeature()
     try fileInstaller.install(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.progressHookGroupsByEvent()
+      hookGroupsByEvent: try CodexHookSettings.hooksByEvent()
     )
   }
 
-  func installNotificationHooks() async throws {
-    try await enableHooksFeature()
-    try fileInstaller.install(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.notificationHookGroupsByEvent()
-    )
-  }
-
-  func uninstallProgressHooks() throws {
+  func uninstallAllHooks() throws {
     try fileInstaller.uninstall(
       settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.progressHookGroupsByEvent()
+      hookGroupsByEvent: try CodexHookSettings.hooksByEvent()
     )
+    // Symmetric with `enableHooksFeature` in install — without this, a
+    // partial-install rollback (or a plain uninstall) leaves
+    // `[features].hooks = true` stranded on disk so `installState` reports
+    // `.outdated` forever with no path back to `.notInstalled`.
+    disableHooksFeatureFlag()
   }
 
-  func uninstallNotificationHooks() throws {
-    try fileInstaller.uninstall(
-      settingsURL: settingsURL,
-      hookGroupsByEvent: try CodexHookSettings.notificationHookGroupsByEvent()
-    )
+  private enum FeaturesConfigState {
+    case absent  // Neither flag set.
+    case upToDate  // Only the new `hooks` flag set.
+    case legacy  // `codex_hooks` is present (with or without `hooks`).
+  }
+
+  /// Inspect `~/.codex/config.toml` for the hooks feature flags. Walks
+  /// lines so a TOML array value (`plugins = ["x"]`) inside the section
+  /// can't truncate detection, and a commented-out `# codex_hooks = true`
+  /// can't false-positive as `.legacy`.
+  private func featuresConfigState() -> FeaturesConfigState {
+    let url = homeDirectoryURL.appending(
+      path: ".codex/config.toml", directoryHint: .notDirectory)
+    guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return .absent }
+    let flags = Self.featuresFlags(in: contents)
+    if flags.legacy { return .legacy }
+    if flags.modern { return .upToDate }
+    return .absent
+  }
+
+  /// Walk `[features]` table lines, returning whether each flag is set.
+  /// Both detection (`featuresConfigState`) and removal
+  /// (`stripLegacyCodexHooksFlag`) share this predicate so they cannot
+  /// disagree on what counts as "legacy".
+  private static func featuresFlags(in contents: String) -> (legacy: Bool, modern: Bool) {
+    var legacy = false
+    var modern = false
+    var inFeaturesSection = false
+    for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
+      if let header = tomlSectionName(in: line) {
+        inFeaturesSection = (header == "features")
+        continue
+      }
+      guard inFeaturesSection else { continue }
+      if line.range(of: #"^\s*codex_hooks\s*=\s*true\b"#, options: .regularExpression) != nil {
+        legacy = true
+      } else if line.range(of: #"^\s*hooks\s*=\s*true\b"#, options: .regularExpression) != nil {
+        modern = true
+      }
+    }
+    return (legacy, modern)
+  }
+
+  /// Returns the section name when `line` is a TOML section header
+  /// (e.g. `[features]`, `[ features ]`, `[features] # comment`).
+  /// Trailing `#`-comments are stripped before the bracket check; missing
+  /// either bracket → not a header. The bracketed inner text is trimmed so
+  /// `[ features ]` matches `features`.
+  static func tomlSectionName(in line: Substring) -> String? {
+    let withoutComment = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+    let trimmed = withoutComment.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("["), trimmed.hasSuffix("]"), trimmed.count >= 2 else { return nil }
+    let inner = trimmed.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+    return inner.isEmpty ? nil : inner
   }
 
   private func enableHooksFeature() async throws {
     let commandResult = try await runEnableHooksCommand()
     guard commandResult.status == 0 else {
       throw CodexSettingsInstallerError.enableHooksFailed(commandResult.standardError)
+    }
+    stripLegacyCodexHooksFlag()
+  }
+
+  /// Remove the deprecated `[features].codex_hooks = true` line from
+  /// `~/.codex/config.toml` if present. Codex's CLI doesn't clean up the
+  /// old flag when enabling the new one, and leaving it surfaces as
+  /// outdated in `installState`. A silent `try?` here would loop the user
+  /// on "Update" forever if the write actually fails (read-only mount,
+  /// ACL), so log it.
+  private func stripLegacyCodexHooksFlag() {
+    rewriteFeaturesSection { line, inFeaturesSection in
+      guard inFeaturesSection,
+        line.range(of: #"^\s*codex_hooks\s*=\s*true\b"#, options: .regularExpression) != nil
+      else { return line }
+      return nil
+    }
+  }
+
+  /// Strip `hooks = true` from `[features]`. Used by uninstall so the
+  /// rollback path leaves the section in the same shape it found it —
+  /// otherwise a partial-install rollback (hooks file cleared, feature
+  /// flag stranded) reports `.outdated` forever with no path back to
+  /// `.notInstalled`.
+  private func disableHooksFeatureFlag() {
+    rewriteFeaturesSection { line, inFeaturesSection in
+      guard inFeaturesSection,
+        line.range(of: #"^\s*hooks\s*=\s*true\b"#, options: .regularExpression) != nil
+      else { return line }
+      return nil
+    }
+  }
+
+  /// Walk `~/.codex/config.toml` line by line, replacing each line in
+  /// the `[features]` section via `transform` (return `nil` to drop).
+  /// No-op when the file doesn't exist or no transform produced a change.
+  private func rewriteFeaturesSection(
+    transform: (Substring, _ inFeaturesSection: Bool) -> Substring?
+  ) {
+    let url = homeDirectoryURL.appending(
+      path: ".codex/config.toml", directoryHint: .notDirectory)
+    let original: String
+    do {
+      original = try String(contentsOf: url, encoding: .utf8)
+    } catch {
+      let nsError = error as NSError
+      if nsError.domain != NSCocoaErrorDomain || nsError.code != NSFileReadNoSuchFileError {
+        codexInstallerLogger.warning(
+          "Failed to read \(url.path) before rewrite: \(error)")
+      }
+      return
+    }
+    var output: [Substring] = []
+    var inFeaturesSection = false
+    for line in original.split(separator: "\n", omittingEmptySubsequences: false) {
+      if let header = Self.tomlSectionName(in: line) {
+        inFeaturesSection = (header == "features")
+        output.append(line)
+        continue
+      }
+      if let kept = transform(line, inFeaturesSection) {
+        output.append(kept)
+      }
+    }
+    let rewritten = output.joined(separator: "\n")
+    guard rewritten != original else { return }
+    do {
+      try rewritten.write(to: url, atomically: true, encoding: .utf8)
+    } catch {
+      codexInstallerLogger.warning(
+        "Failed to rewrite \(url.path): \(error)")
     }
   }
 
@@ -99,7 +220,8 @@ nonisolated struct CodexSettingsInstaller {
   static func runEnableHooksCommand() async throws -> CommandResult {
     let process = Process()
     process.executableURL = loginShellURL()
-    process.arguments = ["-l", "-c", "codex features enable codex_hooks"]
+    // `codex_hooks` was renamed to `hooks` in newer Codex versions; the legacy name is deprecated.
+    process.arguments = ["-l", "-c", "codex features enable hooks"]
     let errorPipe = Pipe()
     process.standardError = errorPipe
     let status = try await withCheckedThrowingContinuation { continuation in
@@ -143,9 +265,9 @@ nonisolated struct CodexSettingsInstaller {
     return path
   }
 
-  private static func reportInvalidHookConfiguration(_ error: Error, progress: Bool) {
+  private static func reportInvalidHookConfiguration(_ error: Error) {
     #if DEBUG
-      assertionFailure("Codex \(progress ? "progress" : "notification") hook configuration is invalid: \(error)")
+      assertionFailure("Codex hook configuration is invalid: \(error)")
     #endif
   }
 

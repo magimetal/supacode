@@ -1,4 +1,5 @@
 import AppKit
+import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalTabView: View {
@@ -8,6 +9,7 @@ struct TerminalTabView: View {
   let tabIndex: Int
   let fixedWidth: CGFloat?
   let hasNotification: Bool
+  let runningAgents: [AgentPresenceManager.AgentInstance]
   let onSelect: () -> Void
   let onClose: () -> Void
   let onRename: (String) -> Void
@@ -24,6 +26,7 @@ struct TerminalTabView: View {
   @State private var cancelOnExit = false
   @FocusState private var isFieldFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     ZStack(alignment: .trailing) {
@@ -34,7 +37,8 @@ struct TerminalTabView: View {
           isHoveringTab: isHovering,
           isHoveringClose: isHoveringClose,
           shortcutHint: shortcutHint,
-          showsShortcutHint: showsShortcutHint
+          showsShortcutHint: showsShortcutHint,
+          runningAgents: runningAgents
         )
       }
       .buttonStyle(TerminalTabButtonStyle(isPressing: $isPressing))
@@ -99,16 +103,29 @@ struct TerminalTabView: View {
           }
       }
     }
+    .opacity(contentOpacity)
+    .saturation(contentSaturation)
     .background {
       TerminalTabBackground(
         isActive: isActive,
+        isHovering: isHovering,
         isPressing: isPressing,
         isDragging: isDragging,
-        isHovering: isHovering,
         tintColor: tab.tintColor
       )
-      .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isHovering)
     }
+    // Below `.background` so the stripe's opacity animates in lockstep with
+    // the foreground content; the previous `.background { ... }.animation`
+    // pairing was lost during a refactor and the stripe started snapping.
+    .animation(
+      reduceMotion ? nil : .easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration),
+      value: TabInteractionKey(
+        isHovering: isHovering,
+        isActive: isActive,
+        isPressing: isPressing,
+        isDragging: isDragging
+      )
+    )
     .padding(.bottom, isActive ? TerminalTabBarMetrics.activeTabBottomPadding : 0)
     .offset(y: isActive ? TerminalTabBarMetrics.activeTabOffset : 0)
     .clipShape(.rect(cornerRadius: TerminalTabBarMetrics.tabCornerRadius))
@@ -144,6 +161,31 @@ struct TerminalTabView: View {
     .overlay {
       MiddleClickView(action: onClose)
     }
+  }
+
+  private var contentOpacity: Double {
+    if isActive || isPressing || isDragging {
+      return 1
+    }
+    return isHovering
+      ? TerminalTabBarMetrics.inactiveContentOpacityHover
+      : TerminalTabBarMetrics.inactiveContentOpacityIdle
+  }
+
+  private struct TabInteractionKey: Hashable {
+    let isHovering: Bool
+    let isActive: Bool
+    let isPressing: Bool
+    let isDragging: Bool
+  }
+
+  private var contentSaturation: Double {
+    if isActive || isPressing || isDragging {
+      return 1
+    }
+    return isHovering
+      ? TerminalTabBarMetrics.inactiveContentSaturationHover
+      : TerminalTabBarMetrics.inactiveContentSaturationIdle
   }
 
   private var shortcutHint: String? {

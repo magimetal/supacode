@@ -54,6 +54,15 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  /// Scripts shared across every repository. Always `.custom` kind.
+  public var globalScripts: [ScriptDefinition]
+  public var richAgentNotificationsEnabled: Bool
+  public var agentPresenceBadgesEnabled: Bool
+  /// When true, an agent integration that reports `.outdated` at launch /
+  /// scene activation is silently re-installed so a Supacode update never
+  /// strands stale hooks (e.g. legacy `Notification` / `PostToolUseFailure`
+  /// entries from earlier wire-protocol revisions).
+  public var autoUpdateAgentIntegrationsEnabled: Bool
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -76,13 +85,17 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyIgnoredOnWorktreeCreate: false,
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge,
-    terminalThemeSyncEnabled: false,
+    terminalThemeSyncEnabled: true,
     restoreTerminalLayoutEnabled: false,
     hideSingleTabBar: false,
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
-    shortcutOverrides: [:]
+    shortcutOverrides: [:],
+    globalScripts: [],
+    richAgentNotificationsEnabled: true,
+    agentPresenceBadgesEnabled: true,
+    autoUpdateAgentIntegrationsEnabled: true
   )
 
   public init(
@@ -106,13 +119,17 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyIgnoredOnWorktreeCreate: Bool = false,
     copyUntrackedOnWorktreeCreate: Bool = false,
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
-    terminalThemeSyncEnabled: Bool = false,
+    terminalThemeSyncEnabled: Bool = true,
     restoreTerminalLayoutEnabled: Bool = false,
     hideSingleTabBar: Bool = false,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
-    shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:]
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
+    globalScripts: [ScriptDefinition] = [],
+    richAgentNotificationsEnabled: Bool = true,
+    agentPresenceBadgesEnabled: Bool = true,
+    autoUpdateAgentIntegrationsEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -141,6 +158,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
+    self.globalScripts = globalScripts
+    self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
+    self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
+    self.autoUpdateAgentIntegrationsEnabled = autoUpdateAgentIntegrationsEnabled
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -152,6 +173,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     init?(intValue: Int) { nil }
   }
 
+  // swiftlint:disable:next function_body_length
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let legacy = try decoder.container(keyedBy: LegacyCodingKey.self)
@@ -222,9 +244,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy =
       try container.decodeIfPresent(PullRequestMergeStrategy.self, forKey: .pullRequestMergeStrategy)
       ?? Self.default.pullRequestMergeStrategy
+    // Existing files predate this key; only fresh installs get `true` via `Self.default`.
     terminalThemeSyncEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalThemeSyncEnabled)
-      ?? Self.default.terminalThemeSyncEnabled
+      ?? false
     restoreTerminalLayoutEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .restoreTerminalLayoutEnabled)
       ?? Self.default.restoreTerminalLayoutEnabled
@@ -252,5 +275,27 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     shortcutOverrides =
       try container.decodeIfPresent([AppShortcutID: AppShortcutOverride].self, forKey: .shortcutOverrides)
       ?? Self.default.shortcutOverrides
+    // Force `.custom` so a forged `kind` can't hijack the primary toolbar slot.
+    // No legacy migration here, so missing-key and corrupt-array both collapse
+    // to `[]` (unlike `RepositorySettings.scripts` which distinguishes them).
+    let decoded: [ScriptDefinition] = container.decodeLossyArrayIfPresent(forKey: .globalScripts) ?? []
+    globalScripts = decoded.map {
+      var script = $0
+      // Intentionally one-way — every load rewrites kind to `.custom`. Don't
+      // remove this assignment if a future schema legitimately needs another
+      // kind for globals; introduce a separate field instead.
+      script.kind = .custom
+      if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
+      return script
+    }
+    richAgentNotificationsEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .richAgentNotificationsEnabled)
+      ?? Self.default.richAgentNotificationsEnabled
+    agentPresenceBadgesEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .agentPresenceBadgesEnabled)
+      ?? Self.default.agentPresenceBadgesEnabled
+    autoUpdateAgentIntegrationsEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .autoUpdateAgentIntegrationsEnabled)
+      ?? Self.default.autoUpdateAgentIntegrationsEnabled
   }
 }

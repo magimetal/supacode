@@ -12,6 +12,8 @@ final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime
   private(set) var socketServer: AgentHookSocketServer?
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
+  @ObservationIgnored
+  @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
   private var lastNotificationIndicatorCount: Int?
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
@@ -37,21 +39,11 @@ final class WorktreeTerminalManager {
   }
 
   private func configureSocketServer(_ server: AgentHookSocketServer) {
-    server.onBusy = { [weak self] worktreeID, tabID, surfaceID, active in
-      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self?.states[decoded] else {
-        terminalLogger.debug("Dropped busy update for unknown worktree \(decoded)")
-        return
-      }
-      state.setAgentBusy(
-        surfaceID: surfaceID,
-        tabID: TerminalTabID(rawValue: tabID),
-        active: active
-      )
-    }
     server.onNotification = { [weak self] worktreeID, _, surfaceID, notification in
+      guard let self else { return }
+      guard self.settingsFile.global.richAgentNotificationsEnabled else { return }
       let decoded = worktreeID.removingPercentEncoding ?? worktreeID
-      guard let state = self?.states[decoded] else {
+      guard let state = self.states[decoded] else {
         terminalLogger.debug("Dropped hook notification for unknown worktree \(decoded)")
         return
       }
@@ -72,6 +64,21 @@ final class WorktreeTerminalManager {
         return
       }
       handler(resource, params, clientFD)
+    }
+    // Always record; the badges toggle gates DISPLAY in
+    // `AgentPresenceManager.agents(forSurface:)` / `agents(across:)`.
+    // Gating recording too would drop session_start events fired while
+    // the toggle was off, so flipping it back on later wouldn't restore
+    // badges for already-running agents.
+    server.onEvent = { [weak self] event in
+      AgentPresenceManager.shared.record(event: event)
+      // Push the activity change into the owning worktree state so
+      // task-status consumers (sidebar shimmer, dock indicator) see
+      // it without polling the presence manager.
+      guard let states = self?.states.values else { return }
+      for state in states where state.surfaceActivityChanged(surfaceID: event.surfaceID) {
+        break
+      }
     }
   }
 
@@ -394,6 +401,20 @@ final class WorktreeTerminalManager {
     states[worktreeID]?.hasSurfaceAnywhere(surfaceID) ?? false
   }
 
+  /// Surface IDs that live in this tab.
+  func surfaceIDs(forTabID tabID: TerminalTabID) -> [UUID] {
+    for state in states.values {
+      let ids = state.surfaceIDs(inTab: tabID)
+      if !ids.isEmpty { return ids }
+    }
+    return []
+  }
+
+  /// Surface IDs across every tab in this worktree.
+  func surfaceIDs(forWorktreeID worktreeID: Worktree.ID) -> [UUID] {
+    states[worktreeID]?.allSurfaceIDs ?? []
+  }
+
   func stateIfExists(for worktreeID: Worktree.ID) -> WorktreeTerminalState? {
     states[worktreeID]
   }
@@ -471,9 +492,11 @@ final class WorktreeTerminalManager {
     }
   }
 
-  func surfaceBackgroundOpacity() -> Double {
-    runtime.backgroundOpacity()
+  func surfaceBackgroundColorScheme() -> ColorScheme {
+    runtime.backgroundColorScheme()
   }
+
+  var ghosttyRuntime: GhosttyRuntime { runtime }
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {
     (runtime.unfocusedSplitFill(), runtime.unfocusedSplitOverlayOpacity())

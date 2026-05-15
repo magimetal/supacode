@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import OrderedCollections
 import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -9,6 +10,7 @@ struct WorktreeDetailView: View {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
+  @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
 
   var body: some View {
     detailBody(state: store.state)
@@ -39,7 +41,8 @@ struct WorktreeDetailView: View {
       && loadingInfo == nil
       && !showsMultiSelectionSummary
     let openActionSelection = state.openActionSelection
-    let scripts = state.scripts
+    let repoScripts = state.repoScripts
+    let globalScripts = state.globalScripts
     let runningScriptIDs = state.runningScriptIDs
     let notificationGroups = repositories.toolbarNotificationGroups(terminalManager: terminalManager)
     let unseenNotificationWorktreeCount = notificationGroups.reduce(0) { count, repository in
@@ -52,12 +55,19 @@ struct WorktreeDetailView: View {
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
     .toolbar(removing: .title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent()
       } else if hasActiveWorktree, let selectedWorktree {
+        let titleContent = Self.makeToolbarTitleContent(
+          selectedWorktree: selectedWorktree,
+          selectedRow: selectedRow,
+          repositories: repositories,
+          hideSubtitleOnMatch: hideSubtitleOnMatch
+        )
         let toolbarState = WorktreeToolbarState(
-          title: selectedWorktree.name,
+          titleContent: titleContent,
           rootURL: selectedWorktree.repositoryRootURL,
           kind: toolbarKind(for: selectedWorktree, repositories: repositories),
           statusToast: repositories.statusToast,
@@ -65,14 +75,12 @@ struct WorktreeDetailView: View {
           unseenNotificationWorktreeCount: unseenNotificationWorktreeCount,
           openActionSelection: openActionSelection,
           showExtras: commandKeyObserver.isPressed,
-          scripts: scripts,
+          repoScripts: repoScripts,
+          globalScripts: globalScripts,
           runningScriptIDs: runningScriptIDs,
         )
         WorktreeToolbarContent(
           toolbarState: toolbarState,
-          onRenameBranch: { newBranch in
-            store.send(.repositories(.requestRenameBranch(selectedWorktree.id, newBranch)))
-          },
           onOpenWorktree: { action in
             store.send(.openWorktree(action))
           },
@@ -88,14 +96,16 @@ struct WorktreeDetailView: View {
           onRunNamedScript: { store.send(.runNamedScript($0)) },
           onStopScript: { store.send(.stopScript($0)) },
           onStopRunScripts: { store.send(.stopRunScripts) },
-          onManageScripts: {
+          onManageRepoScripts: {
             let repositoryID = selectedWorktree.repositoryRootURL.path(percentEncoded: false)
             store.send(.settings(.setSelection(.repositoryScripts(repositoryID))))
+          },
+          onManageGlobalScripts: {
+            store.send(.settings(.setSelection(.scripts)))
           }
         )
       }
     }
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     let hasRunningRunScript = state.hasRunningRunScript
     let actions = makeFocusedActions(
       hasActiveWorktree: hasActiveWorktree,
@@ -161,6 +171,11 @@ struct WorktreeDetailView: View {
     return !repositories.isInitialLoadComplete
   }
 
+  // Apply `windowTintColorScheme` here, inside the detail body, so that text
+  // and icons painted over the tinted window pick the right luminance — but
+  // the surrounding `.toolbar { ... }` items keep the system color scheme so
+  // they stay readable in fullscreen, where the titlebar paints with system
+  // appearance.
   @ViewBuilder
   private func detailContent(
     repositories: RepositoriesFeature.State,
@@ -168,40 +183,43 @@ struct WorktreeDetailView: View {
     selectedWorktree: Worktree?,
     selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
   ) -> some View {
-    if repositories.isShowingArchivedWorktrees {
-      ArchivedWorktreesDetailView(
-        store: store.scope(state: \.repositories, action: \.repositories)
-      )
-    } else if shouldShowMultiSelectionSummary(
-      repositories: repositories,
-      selectedWorktreeSummaries: selectedWorktreeSummaries
-    ) {
-      MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
-    } else if let loadingInfo {
-      WorktreeLoadingView(info: loadingInfo)
-    } else if let selectedWorktree {
-      let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
-      let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-      WorktreeTerminalTabsView(
-        worktree: selectedWorktree,
-        manager: terminalManager,
-        shouldRunSetupScript: shouldRunSetupScript,
-        forceAutoFocus: shouldFocusTerminal,
-        createTab: { store.send(.newTerminal) }
-      )
-      .id(selectedWorktree.id)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .ignoresSafeArea(.container, edges: .bottom)
-      .onAppear {
-        if shouldFocusTerminal {
-          store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+    Group {
+      if repositories.isShowingArchivedWorktrees {
+        ArchivedWorktreesDetailView(
+          store: store.scope(state: \.repositories, action: \.repositories)
+        )
+      } else if shouldShowMultiSelectionSummary(
+        repositories: repositories,
+        selectedWorktreeSummaries: selectedWorktreeSummaries
+      ) {
+        MultiSelectedWorktreesDetailView(rows: selectedWorktreeSummaries)
+      } else if let loadingInfo {
+        WorktreeLoadingView(info: loadingInfo)
+      } else if let selectedWorktree {
+        let shouldRunSetupScript = repositories.pendingSetupScriptWorktreeIDs.contains(selectedWorktree.id)
+        let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
+        WorktreeTerminalTabsView(
+          worktree: selectedWorktree,
+          manager: terminalManager,
+          shouldRunSetupScript: shouldRunSetupScript,
+          forceAutoFocus: shouldFocusTerminal,
+          createTab: { store.send(.newTerminal) }
+        )
+        .id(selectedWorktree.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .bottom)
+        .onAppear {
+          if shouldFocusTerminal {
+            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
+          }
         }
+      } else if !repositories.isInitialLoadComplete {
+        DetailPlaceholderView()
+      } else {
+        EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
       }
-    } else if !repositories.isInitialLoadComplete {
-      DetailPlaceholderView()
-    } else {
-      EmptyStateView(store: store.scope(state: \.repositories, action: \.repositories))
     }
+    .windowTintColorScheme(manager: terminalManager)
   }
 
   private func applyFocusedActions<Content: View>(
@@ -218,6 +236,7 @@ struct WorktreeDetailView: View {
       .focusedSceneValue(\.openActionSelection, resolvedSelection)
       .focusedSceneValue(\.newTerminalAction, actions.newTerminal)
       .focusedSceneValue(\.newBrowserTabAction, actions.newBrowserTab)
+      .focusedValue(\.splitTerminalAction, actions.splitTerminal)
       .focusedValue(\.closeTabAction, actions.closeTab)
       .focusedValue(\.closeSurfaceAction, actions.closeSurface)
       .focusedSceneValue(\.startSearchAction, actions.startSearch)
@@ -236,11 +255,14 @@ struct WorktreeDetailView: View {
     func action(_ appAction: AppFeature.Action) -> (() -> Void)? {
       hasActiveWorktree ? { store.send(appAction) } : nil
     }
+    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)? =
+      hasActiveWorktree ? { direction in store.send(.splitTerminal(direction)) } : nil
     return FocusedActions(
       openSelectedWorktree: action(.openSelectedWorktree),
       revealInFinder: action(.revealInFinder),
       newTerminal: action(.newTerminal),
       newBrowserTab: action(.newBrowserTab),
+      splitTerminal: splitTerminal,
       closeTab: action(.closeTab),
       closeSurface: action(.closeSurface),
       startSearch: action(.startSearch),
@@ -276,6 +298,7 @@ struct WorktreeDetailView: View {
     let revealInFinder: (() -> Void)?
     let newTerminal: (() -> Void)?
     let newBrowserTab: (() -> Void)?
+    let splitTerminal: ((TerminalSplitMenuDirection) -> Void)?
     let closeTab: (() -> Void)?
     let closeSurface: (() -> Void)?
     let startSearch: (() -> Void)?
@@ -287,6 +310,28 @@ struct WorktreeDetailView: View {
     let stopRunScript: (() -> Void)?
   }
 
+  fileprivate struct ScriptMenuIdentity: Hashable {
+    let rootURL: URL
+    let repoFingerprints: [ScriptFingerprint]
+    let globalFingerprints: [ScriptFingerprint]
+  }
+
+  fileprivate struct ScriptFingerprint: Hashable {
+    let id: UUID
+    let displayName: String
+    let resolvedSystemImage: String
+    let resolvedTintColor: RepositoryColor
+    let isCommandBlank: Bool
+
+    init(_ script: ScriptDefinition) {
+      id = script.id
+      displayName = script.displayName
+      resolvedSystemImage = script.resolvedSystemImage
+      resolvedTintColor = script.resolvedTintColor
+      isCommandBlank = script.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
+
   fileprivate struct WorktreeToolbarState {
     // Folders have no git remote, so the PR payload is scoped to
     // `.git` — this makes "folder with a pull request" unrepresentable.
@@ -295,7 +340,7 @@ struct WorktreeDetailView: View {
       case folder
     }
 
-    let title: String
+    let titleContent: WorktreeToolbarTitleContent
     let rootURL: URL
     let kind: Kind
     let statusToast: RepositoriesFeature.StatusToast?
@@ -303,7 +348,8 @@ struct WorktreeDetailView: View {
     let unseenNotificationWorktreeCount: Int
     let openActionSelection: OpenWorktreeAction
     let showExtras: Bool
-    let scripts: [ScriptDefinition]
+    let repoScripts: [ScriptDefinition]
+    let globalScripts: [ScriptDefinition]
     let runningScriptIDs: Set<UUID>
 
     var isFolder: Bool {
@@ -314,14 +360,36 @@ struct WorktreeDetailView: View {
       if case .git(let pullRequest) = kind { pullRequest } else { nil }
     }
 
+    var allScripts: [ScriptDefinition] {
+      .merged(repo: repoScripts, global: globalScripts)
+    }
+
+    // Drop globals shadowed by repo IDs (handled by `merged`) and globals with
+    // empty commands so half-configured entries don't surface in N repo toolbars.
+    var visibleGlobalScripts: [ScriptDefinition] {
+      Array(allScripts.dropFirst(repoScripts.count))
+        .filter { !$0.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    // NSMenu cache key — fingerprint covers only what the toolbar Menu actually renders
+    // (display name, icon, tint, has-command). Editing a command body is a no-op for the
+    // identity, which avoids per-keystroke menu rebuilds while still catching renames.
+    var scriptMenuIdentity: ScriptMenuIdentity {
+      ScriptMenuIdentity(
+        rootURL: rootURL,
+        repoFingerprints: repoScripts.map(ScriptFingerprint.init),
+        globalFingerprints: globalScripts.map(ScriptFingerprint.init),
+      )
+    }
+
     /// The first `.run`-kind script, if any.
     var primaryScript: ScriptDefinition? {
-      scripts.primaryScript
+      allScripts.primaryScript
     }
 
     /// Whether any `.run`-kind script is currently running.
     var hasRunningRunScript: Bool {
-      scripts.hasRunningRunScript(in: runningScriptIDs)
+      allScripts.hasRunningRunScript(in: runningScriptIDs)
     }
 
     var runScriptHelpText: String {
@@ -339,7 +407,6 @@ struct WorktreeDetailView: View {
 
   fileprivate struct WorktreeToolbarContent: ToolbarContent {
     let toolbarState: WorktreeToolbarState
-    let onRenameBranch: (String) -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -349,17 +416,14 @@ struct WorktreeDetailView: View {
     let onRunNamedScript: (ScriptDefinition) -> Void
     let onStopScript: (ScriptDefinition) -> Void
     let onStopRunScripts: () -> Void
-    let onManageScripts: () -> Void
+    let onManageRepoScripts: () -> Void
+    let onManageGlobalScripts: () -> Void
 
     var body: some ToolbarContent {
-      ToolbarItem {
-        WorktreeDetailTitleView(
-          title: toolbarState.title,
-          rootURL: toolbarState.rootURL,
-          isFolder: toolbarState.isFolder,
-          onRenameBranch: onRenameBranch
-        )
+      ToolbarItem(placement: .navigation) {
+        WorktreeToolbarTitleView(content: toolbarState.titleContent)
       }
+      .sharedBackgroundVisibility(.hidden)
 
       ToolbarSpacer(.flexible)
 
@@ -396,10 +460,11 @@ struct WorktreeDetailView: View {
           onRunNamedScript: onRunNamedScript,
           onStopScript: onStopScript,
           onStopRunScripts: onStopRunScripts,
-          onManageScripts: onManageScripts
+          onManageRepoScripts: onManageRepoScripts,
+          onManageGlobalScripts: onManageGlobalScripts
         )
-        // Rebuild the NSMenu per repo; the toolbar Menu otherwise caches first-opened items (#280).
-        .id(toolbarState.rootURL)
+        // Rebuild the NSMenu when any field changes (#280) so renames propagate without a worktree switch.
+        .id(toolbarState.scriptMenuIdentity)
         .transaction { $0.animation = nil }
       }
     }
@@ -445,6 +510,52 @@ struct WorktreeDetailView: View {
       guard isDefault else { return action.title }
       return "\(action.title) (\(resolveShortcutDisplay(for: AppShortcuts.openWorktree)))"
     }
+  }
+
+  static func makeToolbarTitleContent(
+    selectedWorktree: Worktree,
+    selectedRow: SidebarItemModel?,
+    repositories: RepositoriesFeature.State,
+    hideSubtitleOnMatch: Bool
+  ) -> WorktreeToolbarTitleContent {
+    let repositoryID = selectedRow?.repositoryID
+    let repository = repositoryID.flatMap { repositories.repositories[id: $0] }
+    let section = repositoryID.flatMap { repositories.sidebar.sections[$0] }
+    let customTitle = section?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let defaultName = repository?.name ?? selectedWorktree.repositoryRootURL.lastPathComponent
+    let repositoryName = customTitle.flatMap { $0.isEmpty ? nil : $0 } ?? defaultName
+
+    if selectedRow?.isFolder == true {
+      return .folder(name: repositoryName)
+    }
+
+    let worktreeSubtitle: String? = {
+      guard let selectedRow else { return nil }
+      // Sole default worktree: nothing to disambiguate.
+      if selectedRow.isMainWorktree,
+        let repository,
+        repository.worktrees.count == 1,
+        !repositories.pendingWorktrees.contains(where: { $0.repositoryID == repository.id })
+      {
+        return nil
+      }
+      let worktreeName = selectedRow.sidebarDisplayName ?? "Default"
+      let branchName = selectedWorktree.name
+      let branchLastComponent = branchName.split(separator: "/").last.map(String.init) ?? branchName
+      if hideSubtitleOnMatch, worktreeName == branchLastComponent { return nil }
+      return worktreeName
+    }()
+
+    return .git(
+      .init(
+        branchName: selectedWorktree.name,
+        repositoryName: repositoryName,
+        repositoryColor: section?.color,
+        worktreeSubtitle: worktreeSubtitle,
+        accent: selectedRow?.accent ?? .default,
+        rootURL: selectedWorktree.repositoryRootURL
+      )
+    )
   }
 
   private func toolbarKind(
@@ -553,7 +664,6 @@ private struct DetailPlaceholderView: View {
     }
     .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(nsColor: .windowBackgroundColor))
     .task {
       let clock = ContinuousClock()
       while !Task.isCancelled {
@@ -573,7 +683,7 @@ private struct DetailPlaceholderView: View {
 
 private struct ToolbarPlaceholderContent: ToolbarContent {
   var body: some ToolbarContent {
-    ToolbarItem {
+    ToolbarItem(placement: .navigation) {
       Button {
       } label: {
         HStack(spacing: 6) {
@@ -586,6 +696,7 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
       .redacted(reason: .placeholder)
       .shimmer(isActive: true)
     }
+    .sharedBackgroundVisibility(.hidden)
 
     ToolbarSpacer(.flexible)
 
@@ -772,7 +883,8 @@ private struct ScriptMenu: View {
   let onRunNamedScript: (ScriptDefinition) -> Void
   let onStopScript: (ScriptDefinition) -> Void
   let onStopRunScripts: () -> Void
-  let onManageScripts: () -> Void
+  let onManageRepoScripts: () -> Void
+  let onManageGlobalScripts: () -> Void
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
 
   private var primaryScript: ScriptDefinition? {
@@ -782,33 +894,27 @@ private struct ScriptMenu: View {
   var body: some View {
     let hasRunning = toolbarState.hasRunningRunScript
     Menu {
-      ForEach(toolbarState.scripts) { script in
-        let isRunning = toolbarState.runningScriptIDs.contains(script.id)
-        Button {
-          if isRunning {
-            onStopScript(script)
-          } else {
-            onRunNamedScript(script)
-          }
-        } label: {
-          Label {
-            Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
-          } icon: {
-            Image.tintedSymbol(
-              isRunning ? "stop" : script.resolvedSystemImage,
-              color: script.resolvedTintColor.nsColor,
-            )
-          }
+      scriptButtons(for: toolbarState.repoScripts)
+      let visibleGlobals = toolbarState.visibleGlobalScripts
+      if !visibleGlobals.isEmpty {
+        if !toolbarState.repoScripts.isEmpty {
+          Divider()
         }
-        .help(isRunning ? "Stop \(script.displayName)." : "Run \(script.displayName).")
+        Section("Global") {
+          scriptButtons(for: visibleGlobals)
+        }
       }
-      if !toolbarState.scripts.isEmpty {
+      if !toolbarState.allScripts.isEmpty {
         Divider()
       }
-      Button("Manage Scripts…") {
-        onManageScripts()
+      Button("Manage Repo Scripts…") {
+        onManageRepoScripts()
       }
-      .help("Open repository settings to manage scripts.")
+      .help("Open repository settings to manage repo scripts.")
+      Button("Manage Global Scripts…") {
+        onManageGlobalScripts()
+      }
+      .help("Open settings to manage global scripts.")
     } label: {
       scriptLabel(hasRunning: hasRunning)
     } primaryAction: {
@@ -816,11 +922,45 @@ private struct ScriptMenu: View {
         onStopRunScripts()
       } else if primaryScript != nil {
         onRunScript()
+      } else if toolbarState.repoScripts.isEmpty, !toolbarState.globalScripts.isEmpty {
+        onManageGlobalScripts()
       } else {
-        onManageScripts()
+        onManageRepoScripts()
       }
     }
     .help(primaryHelpText(hasRunning: hasRunning))
+  }
+
+  @ViewBuilder
+  private func scriptButtons(for scripts: [ScriptDefinition]) -> some View {
+    ForEach(scripts) { script in
+      let isRunning = toolbarState.runningScriptIDs.contains(script.id)
+      let hasCommand = !script.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      Button {
+        if isRunning {
+          onStopScript(script)
+        } else {
+          onRunNamedScript(script)
+        }
+      } label: {
+        Label {
+          Text(isRunning ? "Stop \(script.displayName)" : script.displayName)
+        } icon: {
+          Image.tintedSymbol(
+            isRunning ? "stop" : script.resolvedSystemImage,
+            color: script.resolvedTintColor.nsColor,
+          )
+        }
+      }
+      .disabled(!isRunning && !hasCommand)
+      .help(scriptButtonHelp(script: script, isRunning: isRunning, hasCommand: hasCommand))
+    }
+  }
+
+  private func scriptButtonHelp(script: ScriptDefinition, isRunning: Bool, hasCommand: Bool) -> String {
+    if isRunning { return "Stop \(script.displayName)." }
+    if !hasCommand { return "\"\(script.displayName)\" has no command — configure it in Settings." }
+    return "Run \(script.displayName)."
   }
 
   @ViewBuilder
@@ -858,7 +998,16 @@ private struct WorktreeToolbarPreview: View {
 
   init() {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
-      title: "feature/toolbar-preview",
+      titleContent: .git(
+        .init(
+          branchName: "feature/toolbar-preview",
+          repositoryName: "supacode",
+          repositoryColor: .blue,
+          worktreeSubtitle: "toolbar-preview",
+          accent: .pinned,
+          rootURL: URL(fileURLWithPath: "/tmp/preview")
+        )
+      ),
       rootURL: URL(fileURLWithPath: "/tmp/preview"),
       kind: .git(pullRequest: nil),
       statusToast: nil,
@@ -866,7 +1015,8 @@ private struct WorktreeToolbarPreview: View {
       unseenNotificationWorktreeCount: 0,
       openActionSelection: .finder,
       showExtras: false,
-      scripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
+      repoScripts: [ScriptDefinition(kind: .run, command: "npm run dev")],
+      globalScripts: [],
       runningScriptIDs: [],
     )
     let observer = CommandKeyObserver()
@@ -882,7 +1032,6 @@ private struct WorktreeToolbarPreview: View {
     .toolbar {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
-        onRenameBranch: { _ in },
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},
@@ -892,7 +1041,8 @@ private struct WorktreeToolbarPreview: View {
         onRunNamedScript: { _ in },
         onStopScript: { _ in },
         onStopRunScripts: {},
-        onManageScripts: {}
+        onManageRepoScripts: {},
+        onManageGlobalScripts: {}
       )
     }
     .environment(commandKeyObserver)

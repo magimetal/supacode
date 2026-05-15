@@ -5,7 +5,7 @@ import SwiftUI
 
 // Compile-time checkable shortcut identifier.
 public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresentable {
-  case commandPalette, openSettings, checkForUpdates
+  case commandPalette, openSettings, checkForUpdates, showMainWindow
   case toggleLeftSidebar, revealInSidebar
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
@@ -38,6 +38,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .commandPalette: "commandPalette"
     case .openSettings: "openSettings"
     case .checkForUpdates: "checkForUpdates"
+    case .showMainWindow: "showMainWindow"
     case .toggleLeftSidebar: "toggleLeftSidebar"
     case .revealInSidebar: "revealInSidebar"
     case .newWorktree: "newWorktree"
@@ -66,6 +67,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "commandPalette": .commandPalette,
     "openSettings": .openSettings,
     "checkForUpdates": .checkForUpdates,
+    "showMainWindow": .showMainWindow,
     "toggleLeftSidebar": .toggleLeftSidebar,
     "revealInSidebar": .revealInSidebar,
     "newWorktree": .newWorktree,
@@ -106,6 +108,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .commandPalette: "Command Palette"
     case .openSettings: "Open Settings"
     case .checkForUpdates: "Check For Updates"
+    case .showMainWindow: "Show Main Window"
     case .toggleLeftSidebar: "Toggle Left Sidebar"
     case .revealInSidebar: "Reveal in Sidebar"
     case .newWorktree: "New Worktree"
@@ -293,6 +296,7 @@ public enum AppShortcuts {
   public static let commandPalette = AppShortcut(id: .commandPalette, key: "p", modifiers: .command)
   public static let openSettings = AppShortcut(id: .openSettings, key: ",", modifiers: .command)
   public static let checkForUpdates = AppShortcut(id: .checkForUpdates, key: "u", modifiers: .command)
+  public static let showMainWindow = AppShortcut(id: .showMainWindow, key: "0", modifiers: .command)
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
@@ -356,10 +360,33 @@ public enum AppShortcuts {
     selectWorktree6, selectWorktree7, selectWorktree8, selectWorktree9, selectWorktree0,
   ]
 
+  public static func worktreeSelectionShortcutDisplay(
+    atSlot index: Int,
+    overrides: [AppShortcutID: AppShortcutOverride]
+  ) -> String? {
+    guard worktreeSelection.indices.contains(index) else { return nil }
+    return worktreeSelection[index].effective(from: overrides)?.display
+  }
+
+  // Drops disabled bindings and out-of-range slots so neither leaves a stale NSMenuItem keyEquivalent.
+  public static func activeWorktreeSelectionSlots(
+    overrides: [AppShortcutID: AppShortcutOverride],
+    orderedRowsCount: Int
+  ) -> [(index: Int, shortcut: AppShortcut)] {
+    worktreeSelection.enumerated().compactMap { index, shortcut in
+      guard index < orderedRowsCount else { return nil }
+      guard let effective = shortcut.effective(from: overrides) else { return nil }
+      return (index, effective)
+    }
+  }
+
   // MARK: - Groups.
 
   public static let groups: [AppShortcutGroup] = [
-    AppShortcutGroup(category: .general, shortcuts: [commandPalette, openSettings, checkForUpdates]),
+    AppShortcutGroup(
+      category: .general,
+      shortcuts: [commandPalette, openSettings, checkForUpdates, showMainWindow]
+    ),
     AppShortcutGroup(category: .sidebar, shortcuts: [toggleLeftSidebar, revealInSidebar]),
     AppShortcutGroup(
       category: .worktrees,
@@ -441,12 +468,9 @@ public enum AppShortcuts {
 // MARK: - View modifier.
 
 extension View {
-  @ViewBuilder
+  // Always returns the same view type so menu-bar CommandGroups don't lose identity
+  // when the shortcut hydrates from disk; that flip strips Tahoe arrangement items.
   public func appKeyboardShortcut(_ shortcut: AppShortcut?) -> some View {
-    if let shortcut {
-      self.keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
-    } else {
-      self
-    }
+    keyboardShortcut(shortcut.map { KeyboardShortcut($0.keyEquivalent, modifiers: $0.modifiers) })
   }
 }

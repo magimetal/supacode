@@ -40,10 +40,6 @@ struct SettingsFeatureTests {
       SettingsFeature()
     } withDependencies: {
       $0[CLIInstallerClient.self].checkInstalled = { false }
-      $0[CLISkillClient.self].checkInstalled = { _ in false }
-      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
-      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
-      $0[KiroSettingsClient.self].checkInstalled = { _ in false }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -370,6 +366,77 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.restoreTerminalLayoutEnabled == true)
   }
 
+  // MARK: - Global scripts.
+
+  @Test(.dependencies) func addGlobalScriptAppendsCustomKindAndPersists() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.addGlobalScript)
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.globalScripts.count == 1)
+    #expect(store.state.globalScripts.first?.kind == .custom)
+    #expect(settingsFile.global.globalScripts.count == 1)
+  }
+
+  @Test(.dependencies) func removeGlobalScriptPresentsAlertWithDisplayName() async {
+    let script = ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")
+    var initial = SettingsFeature.State()
+    initial.globalScripts = [script]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: initial) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.removeGlobalScript(script.id))
+    #expect(store.state.alert != nil)
+    #expect(store.state.globalScripts == [script])
+  }
+
+  @Test(.dependencies) func settingsLoadedSyncsGlobalScriptsFromDisk() async {
+    // Without this sync, the Settings UI binds to an empty array even though
+    // disk has user-defined globals — the user opens the pane, sees nothing,
+    // and any binding write clobbers the disk content.
+    let onDisk = ScriptDefinition(kind: .custom, name: "Disk", command: "echo disk")
+    var settings = GlobalSettings.default
+    settings.globalScripts = [onDisk]
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.settingsLoaded(settings))
+    #expect(store.state.globalScripts == [onDisk])
+  }
+
+  @Test(.dependencies) func confirmRemoveGlobalScriptRemovesAndPersists() async {
+    let kept = ScriptDefinition(kind: .custom, name: "Keep", command: "echo keep")
+    let removed = ScriptDefinition(kind: .custom, name: "Drop", command: "echo drop")
+    var initial = SettingsFeature.State()
+    initial.globalScripts = [kept, removed]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.globalScripts = [kept, removed] }
+
+    let store = TestStore(initialState: initial) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.alert(.presented(.confirmRemoveGlobalScript(removed.id))))
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.globalScripts == [kept])
+    #expect(settingsFile.global.globalScripts == [kept])
+  }
+
   // MARK: - Sorted repositories.
 
   @Test(.dependencies) func repositoriesChangedSortsByNameCaseInsensitive() async {
@@ -567,10 +634,6 @@ struct SettingsFeatureTests {
       SettingsFeature()
     } withDependencies: {
       $0[CLIInstallerClient.self].checkInstalled = { false }
-      $0[CLISkillClient.self].checkInstalled = { _ in false }
-      $0[ClaudeSettingsClient.self].checkInstalled = { _ in false }
-      $0[CodexSettingsClient.self].checkInstalled = { _ in false }
-      $0[KiroSettingsClient.self].checkInstalled = { _ in false }
     }
 
     store.exhaustivity = .off(showSkippedAssertions: false)
@@ -918,16 +981,10 @@ struct SettingsFeatureTests {
 
 @MainActor
 private func receiveStartupHookChecks(from store: TestStoreOf<SettingsFeature>) {
-  // CLI/skill/hook checks run in parallel via .merge.
+  // CLI + per-agent integration checks run in parallel via .merge.
   // Caller must drain effects before calling this. Assert final state only.
   #expect(store.state.cliInstallState == .notInstalled)
-  #expect(store.state.claudeSkillState == .notInstalled)
-  #expect(store.state.codexSkillState == .notInstalled)
-  #expect(store.state.kiroSkillState == .notInstalled)
-  #expect(store.state.claudeProgressState == .notInstalled)
-  #expect(store.state.claudeNotificationsState == .notInstalled)
-  #expect(store.state.codexProgressState == .notInstalled)
-  #expect(store.state.codexNotificationsState == .notInstalled)
-  #expect(store.state.kiroProgressState == .notInstalled)
-  #expect(store.state.kiroNotificationsState == .notInstalled)
+  for agent in SkillAgent.allCases {
+    #expect(store.state.agentIntegrationStates[agent] == .ready(.notInstalled))
+  }
 }

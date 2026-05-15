@@ -14,6 +14,7 @@ enum Deeplink: Equatable, Sendable {
   )
   case settings(section: DeeplinkSettingsSection?)
   case settingsRepo(repositoryID: Repository.ID)
+  case settingsRepoScripts(repositoryID: Repository.ID)
 
   enum WorktreeAction: Equatable, Sendable {
     case select
@@ -40,8 +41,8 @@ enum Deeplink: Equatable, Sendable {
     case notifications
     case worktrees
     case developer
-    case codingAgents
     case shortcuts
+    case scripts
     case updates
     case github
   }
