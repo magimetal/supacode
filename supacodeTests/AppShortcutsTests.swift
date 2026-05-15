@@ -206,7 +206,7 @@ struct AppShortcutsTests {
 
   @Test func worktreeSelectionShortcutDisplayReturnsEffectiveDisplay() {
     #expect(
-      AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 6, overrides: [:]) == "⌃7"
+      AppShortcuts.worktreeSelectionShortcutDisplay(atSlot: 6, overrides: [:]) == "⌃⇧7"
     )
   }
 
