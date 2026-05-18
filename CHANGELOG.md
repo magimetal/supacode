@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-05-18
+
+### Added
+
+- Add nested sidebar worktree grouping by branch with onboarding guidance.
+- Add pinned and active sidebar highlight sections for relevant worktrees.
+
+### Changed
+
+- Improve sidebar refresh reliability and detail/menu-bar performance with per-tab observation and cached snapshots.
+- Move agent presence into reducer-managed state and add per-tab terminal progress indicators.
+
+### Fixed
+
+- Drop the stale `ghostty +list-themes` reference from the terminal theme toggle.
+- Preserve fork browser-pane tabs and unsigned local release workflow while syncing upstream main.
+
 ## [0.9.6] - 2026-05-15
 
 ### Added
