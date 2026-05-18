@@ -52,9 +52,11 @@ struct AppFeatureRunScriptTests {
     }
 
     await store.send(.runScript)
-    await store.receive(\.runNamedScript) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
-
+    await store.receive(\.runNamedScript)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+        .init(id: definition.id, tint: definition.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 
@@ -88,8 +90,11 @@ struct AppFeatureRunScriptTests {
       $0.terminalClient.send = { _ in }
     }
 
-    await store.send(.runNamedScript(definition)) {
-      $0.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    await store.send(.runNamedScript(definition))
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+        .init(id: definition.id, tint: definition.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
   }
@@ -104,7 +109,9 @@ struct AppFeatureRunScriptTests {
     )
     initialState.repoScripts = [definition]
     // Pre-populate running state to simulate an already-running script.
-    initialState.repositories.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    initialState.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+      .init(id: definition.id, tint: definition.resolvedTintColor)
+    initialState.repositories.applyPostReduceCacheRecomputes()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(initialState: initialState) {
       AppFeature()
@@ -124,7 +131,12 @@ struct AppFeatureRunScriptTests {
     let repositories = makeRepositoriesState(worktree: worktree)
     let definition = ScriptDefinition(kind: .run, name: "Dev", command: "npm run dev")
     var repositoriesState = repositories
-    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+      .init(id: definition.id, tint: definition.resolvedTintColor)
+    // Re-reconcile after the ad-hoc runningScripts seed so the sidebar
+    // structure cache reflects the seeded state. Otherwise the post-reduce
+    // hook would surface a phantom structure mutation on the first dispatch.
+    repositoriesState.reconcileSidebarForTesting()
 
     let store = TestStore(
       initialState: AppFeature.State(
@@ -145,9 +157,10 @@ struct AppFeatureRunScriptTests {
           tabId: nil
         )
       )
-    ) {
-      $0.repositories.runningScriptsByWorktreeID = [:]
-
+    )
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -236,7 +249,9 @@ struct AppFeatureRunScriptTests {
     // Simulate a script that is running but has been removed from
     // the settings (e.g. user deleted it while it was executing).
     var repositoriesState = repositories
-    repositoriesState.runningScriptsByWorktreeID = [worktree.id: [definition.id: definition.resolvedTintColor]]
+    repositoriesState.sidebarItems[id: worktree.id]?.runningScripts[id: definition.id] =
+      .init(id: definition.id, tint: definition.resolvedTintColor)
+    repositoriesState.reconcileSidebarForTesting()
 
     let store = TestStore(
       initialState: AppFeature.State(
@@ -259,9 +274,10 @@ struct AppFeatureRunScriptTests {
           tabId: nil
         )
       )
-    ) {
-      $0.repositories.runningScriptsByWorktreeID = [:]
-
+    )
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts.remove(id: definition.id)
+      $0.repositories.reconcileSidebarForTesting()
     }
   }
 
@@ -299,10 +315,11 @@ struct AppFeatureRunScriptTests {
       }
     }
 
-    await store.send(.runNamedScript(globalScript)) {
-      $0.repositories.runningScriptsByWorktreeID = [
-        worktree.id: [globalScript.id: globalScript.resolvedTintColor]
-      ]
+    await store.send(.runNamedScript(globalScript))
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.runningScripts[id: globalScript.id] =
+        .init(id: globalScript.id, tint: globalScript.resolvedTintColor)
+      $0.repositories.reconcileSidebarForTesting()
     }
     await store.finish()
 
@@ -460,7 +477,7 @@ struct AppFeatureRunScriptTests {
     await store.finish()
 
     #expect(sent.value.isEmpty)
-    #expect(store.state.repositories.runningScriptsByWorktreeID[worktree.id] == nil)
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.runningScripts.isEmpty == true)
   }
 
   @Test(.dependencies) func primaryScriptIgnoresGlobalRunInjectedViaDecode() throws {
@@ -503,6 +520,7 @@ struct AppFeatureRunScriptTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
+    repositoriesState.reconcileSidebarForTesting()
     return repositoriesState
   }
 }

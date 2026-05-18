@@ -32,8 +32,10 @@ struct AppFeatureTerminalSetupScriptTests {
 
     await store.send(.newTerminal)
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript) {
-      $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
+    await store.receive(\.repositories.consumeSetupScript)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
+      $0.repositories.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
     await store.finish()
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
@@ -82,7 +84,7 @@ struct AppFeatureTerminalSetupScriptTests {
     }
 
     await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
-    #expect(store.state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id))
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending)
     await store.finish()
   }
 
@@ -103,8 +105,10 @@ struct AppFeatureTerminalSetupScriptTests {
     }
 
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript) {
-      $0.repositories.pendingSetupScriptWorktreeIDs.remove(worktree.id)
+    await store.receive(\.repositories.consumeSetupScript)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
+      $0.repositories.applyPostReduceCacheRecomputes([.sidebarStructure, .selectedWorktreeSlice])
     }
     await store.finish()
   }
@@ -195,8 +199,10 @@ struct AppFeatureTerminalSetupScriptTests {
     if selected {
       repositoriesState.selection = .worktree(worktree.id)
     }
+    repositoriesState.reconcileSidebarForTesting()
     if pendingSetupScript {
-      repositoriesState.pendingSetupScriptWorktreeIDs = [worktree.id]
+      repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .pending
+      repositoriesState.applyPostReduceCacheRecomputes()
     }
     return repositoriesState
   }

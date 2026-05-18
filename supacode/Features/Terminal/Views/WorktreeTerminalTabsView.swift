@@ -1,9 +1,14 @@
 import AppKit
+import ComposableArchitecture
 import SwiftUI
 
 struct WorktreeTerminalTabsView: View {
   let worktree: Worktree
   let manager: WorktreeTerminalManager
+  /// Narrowed terminal-orchestration store. The tab bar scopes per-tab
+  /// `TerminalTabFeature` stores via `\.terminalTabs[id:]` from here, so the
+  /// tab-bar surface area stays bounded to terminal state.
+  let terminalsStore: StoreOf<TerminalsFeature>
   let shouldRunSetupScript: Bool
   let forceAutoFocus: Bool
   let createTab: () -> Void
@@ -21,6 +26,8 @@ struct WorktreeTerminalTabsView: View {
       if !state.shouldHideTabBar {
         TerminalTabBarView(
           manager: state.tabManager,
+          terminalState: state,
+          terminalsStore: terminalsStore,
           createTab: createTab,
           split: { direction in
             _ = state.performBindingActionOnFocusedSurface(direction.ghosttyBinding)
@@ -41,12 +48,6 @@ struct WorktreeTerminalTabsView: View {
           renameTab: { tabId, newTitle in
             state.tabManager.setCustomTitle(tabId, title: newTitle)
           },
-          hasNotification: { tabId in
-            state.hasUnseenNotification(forTabID: tabId)
-          },
-          runningAgents: { tabId in
-            AgentPresenceManager.shared.agents(across: state.surfaceIDs(inTab: tabId))
-          }
         )
         .transition(.move(edge: .top).combined(with: .opacity))
       }

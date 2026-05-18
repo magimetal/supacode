@@ -144,6 +144,7 @@ struct TerminalSplitTreeView: View {
                 .allowsHitTesting(false)
             }
           }
+
           .overlay {
             if case .dropping(let zone) = dropState {
               DropOverlayView(zone: zone, size: geometry.size)
@@ -167,9 +168,6 @@ struct TerminalSplitTreeView: View {
 
     private func terminalContent(_ terminalSurface: GhosttySurfaceView, geometry: GeometryProxy) -> some View {
       GhosttyTerminalView(surfaceView: terminalSurface)
-        .overlay(alignment: .top) {
-          GhosttySurfaceProgressOverlay(state: terminalSurface.bridge.state)
-        }
         .overlay(alignment: .topTrailing) {
           if terminalSurface.bridge.state.searchNeedle != nil {
             GhosttySurfaceSearchOverlay(surfaceView: terminalSurface)

@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import OrderedCollections
 import Sharing
 import SupacodeSettingsShared
 import SwiftUI
@@ -7,303 +8,594 @@ import SwiftUI
 private nonisolated let notificationLogger = SupaLogger("Notifications")
 
 struct SidebarItemsView: View {
-  private struct GroupConfiguration: Identifiable {
-    let id: String
-    let rows: [SidebarItemModel]
-    let hideSubtitle: Bool
-    let moveBehavior: SidebarItemGroupView.MoveBehavior
-  }
-
   let repository: Repository
-  let hotkeyRows: [SidebarItemModel]
+  /// Precomputed per-repo slot layout from `SidebarStructure`. The view does
+  /// no slot derivation: it walks `groups` in order and renders.
+  let groups: [SidebarItemGroup]
+  /// Already-resolved shortcut hint strings from the structure's `slotByID`
+  /// joined with `commandKeyObserver.isPressed` + shortcut overrides at the
+  /// `SidebarListView` level. `nil` here means "no hint to render".
+  let shortcutHintByID: [Worktree.ID: String]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
+  @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
-    let state = store.state
-    let sections = state.sidebarItemSections(in: repository)
-    let isSoleDefaultWorktree = sections.allRows.count == 1 && sections.main != nil
-    let isRepositoryRemoving = state.isRemovingRepository(repository)
-    let showShortcutHints = commandKeyObserver.isWorktreeSelectionPressed
-    let shortcutIndexByID: [Worktree.ID: Int] =
-      showShortcutHints
-      ? Dictionary(uniqueKeysWithValues: hotkeyRows.enumerated().map { ($0.element.id, $0.offset) })
-      : [:]
-    let groupConfigurations = [
-      GroupConfiguration(
-        id: "main",
-        rows: sections.main.map { [$0] } ?? [],
-        hideSubtitle: isSoleDefaultWorktree,
-        moveBehavior: .disabled
-      ),
-      GroupConfiguration(
-        id: "pinned",
-        rows: sections.pinned,
-        hideSubtitle: false,
-        moveBehavior: .pinned(repository.id)
-      ),
-      GroupConfiguration(
-        id: "pending",
-        rows: sections.pending,
-        hideSubtitle: false,
-        moveBehavior: .disabled
-      ),
-      GroupConfiguration(
-        id: "unpinned",
-        rows: sections.unpinned,
-        hideSubtitle: false,
-        moveBehavior: .unpinned(repository.id)
-      ),
-    ]
+let isRepositoryRemoving = store.state.isRemovingRepository(repository)
+    SidebarItemsDragOverlay(
+      repository: repository,
+      groups: groups,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      store: store,
+      terminalManager: terminalManager,
+      isRepositoryRemoving: isRepositoryRemoving,
+      shortcutHintByID: shortcutHintByID,
+      nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository
+    )
+  }
+}
 
-    ForEach(groupConfigurations) { groupConfiguration in
+/// Drag highlights now live on each `SidebarItemFeature.State.isDragging`; the
+/// overlay struct is kept for code locality but holds no state of its own.
+private struct SidebarItemsDragOverlay: View {
+  let repository: Repository
+  let groups: [SidebarItemGroup]
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let isRepositoryRemoving: Bool
+  let shortcutHintByID: [Worktree.ID: String]
+  let nestWorktreesByBranch: Bool
+
+  var body: some View {
+    ForEach(groups) { group in
       SidebarItemGroupView(
-        rows: groupConfiguration.rows,
+        repository: repository,
+        rowIDs: group.rowIDs,
         selectedWorktreeIDs: selectedWorktreeIDs,
         store: store,
         terminalManager: terminalManager,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
         isRepositoryRemoving: isRepositoryRemoving,
-        hideSubtitle: groupConfiguration.hideSubtitle,
-        moveBehavior: groupConfiguration.moveBehavior,
-        shortcutIndexByID: shortcutIndexByID
+        hideSubtitle: group.hideSubtitle,
+        moveBehavior: group.moveBehavior,
+        shortcutHintByID: shortcutHintByID,
+        nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting
       )
     }
   }
-
 }
 
 private struct SidebarItemGroupView: View {
-  enum MoveBehavior: Hashable {
-    case disabled
-    case pinned(Repository.ID)
-    case unpinned(Repository.ID)
-  }
-
-  let rows: [SidebarItemModel]
+  let repository: Repository
+  let rowIDs: [SidebarItemID]
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Binding var draggingWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
-  let moveBehavior: MoveBehavior
-  let shortcutIndexByID: [Worktree.ID: Int]
+  let moveBehavior: SidebarItemGroup.MoveBehavior
+  let shortcutHintByID: [Worktree.ID: String]
+  let nestWorktreesByBranch: Bool
 
   var body: some View {
-    // Only attach `.onMove` when the group actually participates in
-    // intra-section reorder. A no-op `onMove` on a single-row group
-    // (e.g. the folder row or a repo's main worktree) still gets
-    // picked up by SwiftUI's sidebar List as a drag target and
-    // steals the repo-level reorder gesture, so the enclosing
-    // section becomes un-draggable.
+    let bucketID = moveBehavior.bucketID
+    let groupingActive = nestWorktreesByBranch && bucketID != nil
+    let nestedBranchRows: [SidebarBranchNesting.Row] =
+      if groupingActive, let bucketID {
+        SidebarBranchNesting.buildRows(
+          itemIDs: rowIDs,
+          branchNames: branchNames(for: rowIDs),
+          collapsedPrefixes: store.state.sidebar.sections[repository.id]?.buckets[bucketID]?
+            .collapsedBranchPrefixes ?? []
+        )
+      } else {
+        rowIDs.map { .leaf(id: $0, depth: 0, displayName: nil) }
+      }
+
+    // A no-op `.onMove` still steals the repo-level reorder gesture, so omit it
+    // for single-row groups. Grouping suppresses reorder for the entire bucket:
+    // cross-group drags would snap back when the tree re-derives from branch
+    // names, and the alphabetical sort would clobber any in-bucket reorder.
+    let shortcutHintBuilder: (SidebarItemID) -> String? = { rowID in
+      shortcutHintByID[rowID]
+    }
     switch moveBehavior {
     case .disabled:
-      ForEach(rows) { row in rowContainer(for: row) }
+      ForEach(nestedBranchRows) { row in
+        SidebarBranchNestingRowView(
+          repositoryID: repository.id,
+          bucketID: moveBehavior.bucketID,
+          row: row,
+          store: store,
+          terminalManager: terminalManager,
+          selectedWorktreeIDs: selectedWorktreeIDs,
+          isRepositoryRemoving: isRepositoryRemoving,
+          hideSubtitle: hideSubtitle,
+          moveMode: .alwaysDisabled,
+          shortcutHint: shortcutHintBuilder
+        )
+      }
     case .pinned, .unpinned:
-      ForEach(rows) { row in rowContainer(for: row) }
+      if groupingActive {
+        ForEach(nestedBranchRows) { row in
+          SidebarBranchNestingRowView(
+            repositoryID: repository.id,
+            bucketID: moveBehavior.bucketID,
+            row: row,
+            store: store,
+            terminalManager: terminalManager,
+            selectedWorktreeIDs: selectedWorktreeIDs,
+            isRepositoryRemoving: isRepositoryRemoving,
+            hideSubtitle: hideSubtitle,
+            moveMode: .alwaysDisabled,
+            shortcutHint: shortcutHintBuilder
+          )
+        }
+      } else {
+        ForEach(nestedBranchRows) { row in
+          SidebarBranchNestingRowView(
+            repositoryID: repository.id,
+            bucketID: moveBehavior.bucketID,
+            row: row,
+            store: store,
+            terminalManager: terminalManager,
+            selectedWorktreeIDs: selectedWorktreeIDs,
+            isRepositoryRemoving: isRepositoryRemoving,
+            hideSubtitle: hideSubtitle,
+            moveMode: .conditional,
+            shortcutHint: shortcutHintBuilder
+          )
+        }
         .onMove(perform: moveRows)
+      }
     }
   }
 
-  @ViewBuilder
-  private func rowContainer(for row: SidebarItemModel) -> some View {
-    SidebarItemContainer(
-      row: row,
-      store: store,
-      terminalManager: terminalManager,
-      selectedWorktreeIDs: selectedWorktreeIDs,
-      draggingWorktreeIDs: $draggingWorktreeIDs,
-      isRepositoryRemoving: isRepositoryRemoving,
-      hideSubtitle: hideSubtitle,
-      moveDisabled: moveDisabled(for: row),
-      shortcutHint: shortcutHint(for: shortcutIndexByID[row.id])
-    )
-  }
-
-  private func moveDisabled(for row: SidebarItemModel) -> Bool {
-    switch moveBehavior {
-    case .disabled:
-      true
-    case .pinned, .unpinned:
-      isRepositoryRemoving || row.isDeleting || row.isArchiving
+  /// Read every row's branchName through a per-leaf scoped child store so
+  /// SwiftUI's observation graph is bounded to the leaf's own branchName
+  /// rather than tracking the full `sidebarItems` IdentifiedArray. Without
+  /// this, every per-row tick (agent storm, notification, running-script
+  /// update) would invalidate the parent. See AGENTS.md "Sidebar performance".
+  private func branchNames(for ids: [SidebarItemID]) -> [SidebarItemID: String] {
+    var result: [SidebarItemID: String] = [:]
+    for id in ids {
+      guard
+        let leafStore = store.scope(
+          state: \.sidebarItems[id: id], action: \.sidebarItems[id: id]
+        )
+      else { continue }
+      result[id] = leafStore.state.branchName
     }
-  }
-
-  @Shared(.settingsFile) private var settingsFile
-
-  private func shortcutHint(for index: Int?) -> String? {
-    guard let index else { return nil }
-    return AppShortcuts.worktreeSelectionShortcutDisplay(
-      atSlot: index,
-      overrides: settingsFile.global.shortcutOverrides
-    )
+    return result
   }
 
   private func moveRows(_ offsets: IndexSet, _ destination: Int) {
+    // `rowIDs` here is the post-hoisting visible list; the full bucket lives
+    // on `sidebar.sections`. Translate against the full order so hoisted
+    // siblings keep their relative positions across the move.
+    let target: (repositoryID: Repository.ID, bucket: SidebarBucket)
     switch moveBehavior {
-    case .disabled:
-      break
-    case .pinned(let repositoryID):
-      store.send(.pinnedWorktreesMoved(repositoryID: repositoryID, offsets, destination))
-    case .unpinned(let repositoryID):
-      store.send(.unpinnedWorktreesMoved(repositoryID: repositoryID, offsets, destination))
+    case .disabled: return
+    case .pinned(let id): target = (id, .pinned)
+    case .unpinned(let id): target = (id, .unpinned)
+    }
+    guard
+      let fullKeys = store.state.sidebar.sections[target.repositoryID]?
+        .buckets[target.bucket]?.items.keys
+    else { return }
+    guard
+      let translated = SidebarItemGroup.translateFilteredMove(
+        offsets: offsets,
+        destination: destination,
+        visibleIDs: rowIDs,
+        fullIDs: Array(fullKeys)
+      )
+    else { return }
+    switch moveBehavior {
+    case .disabled: return
+    case .pinned(let id):
+      store.send(.pinnedWorktreesMoved(repositoryID: id, translated.offsets, translated.destination))
+    case .unpinned(let id):
+      store.send(.unpinnedWorktreesMoved(repositoryID: id, translated.offsets, translated.destination))
     }
   }
 }
 
-// MARK: - Row container.
+extension SidebarItemGroup.MoveBehavior {
+  var bucketID: SidebarBucket? {
+    switch self {
+    case .disabled: nil
+    case .pinned: .pinned
+    case .unpinned: .unpinned
+    }
+  }
+}
 
-private struct SidebarItemContainer: View {
-  let row: SidebarItemModel
+private struct SidebarBranchNestingRowView: View {
+  let repositoryID: Repository.ID
+  let bucketID: SidebarBucket?
+  let row: SidebarBranchNesting.Row
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let selectedWorktreeIDs: Set<Worktree.ID>
-  @Binding var draggingWorktreeIDs: Set<Worktree.ID>
   let isRepositoryRemoving: Bool
   let hideSubtitle: Bool
-  let moveDisabled: Bool
+  let moveMode: SidebarRowMoveMode
+  let shortcutHint: (SidebarItemID) -> String?
+
+  var body: some View {
+    switch row {
+    case .leaf(let id, let depth, let displayName):
+      SidebarItemRow(
+        rowID: id,
+        store: store,
+        terminalManager: terminalManager,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        isRepositoryRemoving: isRepositoryRemoving,
+        hideSubtitle: hideSubtitle,
+        moveMode: moveMode,
+        shortcutHint: shortcutHint(id),
+        displayNameOverride: displayName,
+        nestDepth: depth
+      )
+    case .groupHeader(let prefix, let components, let depth, let isCollapsed, let leafDescendantIDs):
+      if let bucketID {
+        SidebarPathGroupHeaderRow(
+          repositoryID: repositoryID,
+          bucketID: bucketID,
+          prefix: prefix,
+          components: components,
+          depth: depth,
+          isCollapsed: isCollapsed,
+          leafDescendantIDs: leafDescendantIDs,
+          store: store
+        )
+      }
+    }
+  }
+}
+
+/// Header row for a nested branch group. Holds only value-type inputs so a
+/// per-row state mutation in the bucket (e.g. an agent tool storm on one
+/// leaf) doesn't invalidate this row; the per-leaf indicator aggregation is
+/// scoped to its own subview that observes only its descendants.
+private struct SidebarPathGroupHeaderRow: View {
+  let repositoryID: Repository.ID
+  let bucketID: SidebarBucket
+  let prefix: String
+  let components: [String]
+  let depth: Int
+  let isCollapsed: Bool
+  let leafDescendantIDs: [SidebarItemID]
+  @Bindable var store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    let label = components.isEmpty ? prefix : components.joined(separator: "/")
+    Button {
+      _ = withAnimation(.easeOut(duration: 0.2)) {
+        store.send(
+          .branchNestExpansionChanged(
+            repositoryID: repositoryID,
+            bucketID: bucketID,
+            prefix: prefix,
+            isExpanded: isCollapsed
+          )
+        )
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "chevron.right")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+          .animation(.easeInOut(duration: 0.15), value: isCollapsed)
+          .frame(width: 12)
+          .accessibilityHidden(true)
+        Text(label)
+          .font(.body)
+          .lineLimit(1)
+          .foregroundStyle(.primary)
+        Spacer(minLength: 0)
+        if isCollapsed {
+          SidebarPathGroupAggregatedIndicators(parentStore: store, leafIDs: leafDescendantIDs)
+        }
+      }
+      .contentShape(.interaction, .rect)
+    }
+    .buttonStyle(.plain)
+    .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep)
+    .listRowInsets(.vertical, 6)
+    .moveDisabled(true)
+    .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
+    .accessibilityLabel("\(label) group, \(isCollapsed ? "collapsed" : "expanded")")
+  }
+}
+
+/// Aggregates per-leaf indicators (notification, running scripts, agents)
+/// by scoping each descendant through `store.scope(state: \.sidebarItems[id:])`.
+/// Per-leaf scoping keeps observation bounded to each leaf's own state, so a
+/// tool storm on one row only invalidates this view (not the surrounding row
+/// chrome). Aggregation itself delegates to the tested pure function in
+/// `SidebarBranchNesting` so there is one algorithm and one set of tests.
+private struct SidebarPathGroupAggregatedIndicators: View {
+  @Bindable var parentStore: StoreOf<RepositoriesFeature>
+  let leafIDs: [SidebarItemID]
+
+  var body: some View {
+    SidebarPathGroupIndicatorsView(indicators: SidebarBranchNesting.aggregateIndicators(from: snapshots))
+  }
+
+  private var snapshots: [SidebarBranchNesting.LeafIndicatorSnapshot] {
+    leafIDs.compactMap { id in
+      guard
+        let leafStore = parentStore.scope(
+          state: \.sidebarItems[id: id], action: \.sidebarItems[id: id]
+        )
+      else { return nil }
+      return SidebarBranchNesting.LeafIndicatorSnapshot(
+        hasUnseenNotifications: leafStore.state.hasUnseenNotifications,
+        runningScriptColors: leafStore.state.runningScripts.map(\.tint),
+        agents: leafStore.state.agents
+      )
+    }
+  }
+}
+
+private struct SidebarPathGroupIndicatorsView: View, Equatable {
+  let indicators: SidebarBranchNesting.GroupIndicators
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.indicators == rhs.indicators
+  }
+
+  var body: some View {
+    if !indicators.isEmpty {
+      HStack(spacing: 6) {
+        if !indicators.agents.isEmpty {
+          AgentAvatarGroupView(instances: indicators.agents, size: 16)
+        }
+        if !indicators.runningScriptColors.isEmpty || indicators.hasNotification {
+          SidebarPathGroupStatusDotView(
+            runningScriptColors: indicators.runningScriptColors,
+            hasNotification: indicators.hasNotification
+          )
+        }
+      }
+      .transition(.blurReplace)
+    }
+  }
+}
+
+private struct SidebarPathGroupStatusDotView: View, Equatable {
+  let runningScriptColors: [RepositoryColor]
+  let hasNotification: Bool
+  @Environment(\.backgroundProminence) private var backgroundProminence
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.runningScriptColors == rhs.runningScriptColors
+      && lhs.hasNotification == rhs.hasNotification
+  }
+
+  var body: some View {
+    let isRunning = !runningScriptColors.isEmpty
+    ZStack {
+      if isRunning {
+        SidebarPingMultiColorDot(
+          colors: runningScriptColors,
+          isEmphasized: backgroundProminence == .increased,
+          size: 6,
+          showsSolidCenter: !hasNotification
+        )
+      }
+      if hasNotification {
+        Circle()
+          .fill(.orange)
+          .frame(width: 6, height: 6)
+          .accessibilityLabel("Unread notifications in group")
+      }
+    }
+  }
+}
+
+enum SidebarRowMoveMode {
+  case alwaysDisabled
+  case alwaysEnabled
+  case conditional
+}
+
+struct SidebarItemRow: View {
+  let rowID: SidebarItemID
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  let isRepositoryRemoving: Bool
+  let hideSubtitle: Bool
+  let moveMode: SidebarRowMoveMode
   let shortcutHint: String?
-  @Shared(.appStorage("worktreeRowDisplayMode")) private var displayMode: WorktreeRowDisplayMode = .branchFirst
+  var displayNameOverride: String?
+  var nestDepth: Int = 0
+  /// Non-nil while the row is rendered inside the global Pinned / Active
+  /// sections; injected as a `repo · worktree` subtitle disambiguator.
+  var highlightSubtitle: SidebarHighlightRepoTag?
+
+  var body: some View {
+    if let itemStore = store.scope(state: \.sidebarItems[id: rowID], action: \.sidebarItems[id: rowID]) {
+      SidebarItemContainer(
+        store: itemStore,
+        parentStore: store,
+        terminalManager: terminalManager,
+        selectedWorktreeIDs: selectedWorktreeIDs,
+        isRepositoryRemoving: isRepositoryRemoving,
+        hideSubtitle: hideSubtitle,
+        moveMode: moveMode,
+        shortcutHint: shortcutHint,
+        displayNameOverride: displayNameOverride,
+        nestDepth: nestDepth,
+        highlightSubtitle: highlightSubtitle
+      )
+    }
+  }
+}
+
+private struct SidebarItemContainer: View {
+  let store: StoreOf<SidebarItemFeature>
+  @Bindable var parentStore: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  let isRepositoryRemoving: Bool
+  let hideSubtitle: Bool
+  let moveMode: SidebarRowMoveMode
+  let shortcutHint: String?
+  var displayNameOverride: String?
+  var nestDepth: Int = 0
+  var highlightSubtitle: SidebarHighlightRepoTag?
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
 
   var body: some View {
+    SidebarItemBody(
+      store: store,
+      parentStore: parentStore,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: hideSubtitle,
+      moveMode: moveMode,
+      shortcutHint: shortcutHint,
+      displayNameOverride: displayNameOverride,
+      nestDepth: nestDepth,
+      highlightSubtitle: highlightSubtitle,
+      hideSubtitleOnMatch: hideSubtitleOnMatch
+    )
+  }
+}
+
+private struct SidebarItemBody: View {
+  let store: StoreOf<SidebarItemFeature>
+  @Bindable var parentStore: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+  let selectedWorktreeIDs: Set<Worktree.ID>
+  let isRepositoryRemoving: Bool
+  let hideSubtitle: Bool
+  let moveMode: SidebarRowMoveMode
+  let shortcutHint: String?
+  let displayNameOverride: String?
+  let nestDepth: Int
+  let highlightSubtitle: SidebarHighlightRepoTag?
+  let hideSubtitleOnMatch: Bool
+
+  var body: some View {
+    let rowID = store.state.id
+    let lifecycle = store.lifecycle
+    let isDragging = store.isDragging
+    let moveDisabled: Bool =
+      switch moveMode {
+      case .alwaysDisabled: true
+      case .alwaysEnabled: false
+      case .conditional: isRepositoryRemoving || lifecycle == .deleting || lifecycle == .archiving
+      }
     SidebarItemView(
-      row: row,
-      displayMode: displayMode,
+      store: store,
       hideSubtitle: hideSubtitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch,
-      showsPullRequestInfo: !draggingWorktreeIDs.contains(row.id),
-      runningScriptColors: store.state.runningScriptColors(for: row.id),
-      runningAgents: AgentPresenceManager.shared.agents(
-        across: terminalManager.surfaceIDs(forWorktreeID: row.id)),
-      isTaskRunning: terminalManager.stateIfExists(for: row.id)?.taskStatus == .running,
-      showsNotificationIndicator: terminalManager.hasUnseenNotifications(for: row.id),
-      notifications: terminalManager.stateIfExists(for: row.id)?.notifications ?? [],
-      shortcutHint: shortcutHint
+      showsPullRequestInfo: !isDragging,
+      shortcutHint: shortcutHint,
+      displayNameOverride: displayNameOverride,
+      nestDepth: nestDepth,
+      highlightSubtitle: highlightSubtitle
     )
     .environment(\.focusNotificationAction) { notification in
-      guard let terminalState = terminalManager.stateIfExists(for: row.id) else {
+      guard let terminalState = terminalManager.stateIfExists(for: rowID) else {
         notificationLogger.warning(
-          "No terminal state for worktree \(row.id) when focusing notification \(notification.surfaceId).")
+          "No terminal state for worktree \(rowID) when focusing notification \(notification.surfaceID).")
         return
       }
-      if !terminalState.focusSurface(id: notification.surfaceId) {
-        notificationLogger.warning("Failed to focus surface \(notification.surfaceId) for worktree \(row.id).")
+      if !terminalState.focusSurface(id: notification.surfaceID) {
+        notificationLogger.warning("Failed to focus surface \(notification.surfaceID) for worktree \(rowID).")
       }
     }
-    .tag(SidebarSelection.worktree(row.id))
-    .id(row.id)
+    .tag(SidebarSelection.worktree(rowID))
+    .id(rowID)
     .typeSelectEquivalent("")
     .moveDisabled(moveDisabled)
     .contextMenu {
-      if row.isRemovable, let worktree = store.state.worktree(for: row.id), !isRepositoryRemoving {
+      let isRemovable = store.lifecycle == .idle
+      if isRemovable, let worktree = parentStore.state.worktree(for: rowID), !isRepositoryRemoving {
         SidebarItemContextMenu(
           worktree: worktree,
-          row: row,
-          store: store,
+          rowID: rowID,
+          rowKind: store.kind,
+          repositoryID: store.repositoryID,
+          store: parentStore,
           selectedWorktreeIDs: selectedWorktreeIDs
         )
       }
     }
-    .disabled(!row.isRemovable && isRepositoryRemoving)
+    .disabled(isRepositoryRemoving && store.lifecycle != .idle)
     .contentShape(.dragPreview, .rect)
     .contentShape(.interaction, .rect)
     .onDragSessionUpdated { session in
       let draggedIDs = Set(session.draggedItemIDs(for: Worktree.ID.self))
-      if case .ended = session.phase {
-        if !draggingWorktreeIDs.isEmpty {
-          draggingWorktreeIDs = []
-        }
-        return
+      let active: Bool
+      switch session.phase {
+      case .ended, .dataTransferCompleted:
+        active = false
+      default:
+        active = draggedIDs.contains(rowID)
       }
-      if case .dataTransferCompleted = session.phase {
-        if !draggingWorktreeIDs.isEmpty {
-          draggingWorktreeIDs = []
-        }
-        return
-      }
-      if draggedIDs != draggingWorktreeIDs {
-        draggingWorktreeIDs = draggedIDs
+      if active != store.isDragging {
+        store.send(.dragSessionChanged(isDragging: active))
       }
     }
   }
-
 }
 
-// MARK: - Folder row.
-
-/// Folder repositories render exactly one row (the synthesized main
-/// item) and must sit as a *direct* child of the outer
-/// `ForEach(sidebarRootRows)` in `SidebarListView`, otherwise the
-/// enclosing `.onMove` can't route repo-level drags to the folder.
-/// Bypassing `SidebarItemsView`'s nested ForEach-of-groups keeps the
-/// folder row flat, matching the `SidebarFailedRepositoryRow`
-/// pattern that already reorders correctly.
+/// Folder repos render one row that must be a direct child of the outer
+/// `.onMove` to receive repo-level drags. The structure pre-resolves the
+/// synthetic worktree id and the shortcut hint; the view does no lookup.
 struct SidebarFolderRow: View {
   let repository: Repository
-  let hotkeyRows: [SidebarItemModel]
+  let rowID: Worktree.ID
+  let shortcutHint: String?
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
-  @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  @Shared(.settingsFile) private var settingsFile
-  @State private var draggingWorktreeIDs: Set<Worktree.ID> = []
 
   var body: some View {
-    let state = store.state
-    let isRepositoryRemoving = state.isRemovingRepository(repository)
-    if let row = state.sidebarItemSections(in: repository).main {
-      SidebarItemContainer(
-        row: row,
-        store: store,
-        terminalManager: terminalManager,
-        selectedWorktreeIDs: selectedWorktreeIDs,
-        draggingWorktreeIDs: $draggingWorktreeIDs,
-        isRepositoryRemoving: isRepositoryRemoving,
-        hideSubtitle: true,
-        moveDisabled: false,
-        shortcutHint: shortcutHint(for: row.id)
-      )
-    }
-  }
-
-  private func shortcutHint(for rowID: Worktree.ID) -> String? {
-    guard commandKeyObserver.isPressed,
-      let index = hotkeyRows.firstIndex(where: { $0.id == rowID })
-    else { return nil }
-    return AppShortcuts.worktreeSelectionShortcutDisplay(
-      atSlot: index,
-      overrides: settingsFile.global.shortcutOverrides
+    let isRepositoryRemoving = store.state.isRemovingRepository(repository)
+    SidebarItemRow(
+      rowID: rowID,
+      store: store,
+      terminalManager: terminalManager,
+      selectedWorktreeIDs: selectedWorktreeIDs,
+      isRepositoryRemoving: isRepositoryRemoving,
+      hideSubtitle: true,
+      moveMode: .alwaysEnabled,
+      shortcutHint: shortcutHint
     )
   }
 }
 
-// MARK: - Context menu.
-
 private struct SidebarItemContextMenu: View {
   let worktree: Worktree
-  let row: SidebarItemModel
+  let rowID: SidebarItemID
+  let rowKind: SidebarItemFeature.State.Kind
+  let repositoryID: Repository.ID
   @Bindable var store: StoreOf<RepositoriesFeature>
   let selectedWorktreeIDs: Set<Worktree.ID>
   @Shared(.settingsFile) private var settingsFile
 
-  private var contextRows: [SidebarItemModel] {
-    guard selectedWorktreeIDs.count > 1, selectedWorktreeIDs.contains(row.id) else {
-      return [row]
+  private var rowIsFolder: Bool { rowKind == .folder }
+
+  private var contextRows: [SidebarItemFeature.State] {
+    guard selectedWorktreeIDs.count > 1, selectedWorktreeIDs.contains(rowID) else {
+      return store.state.selectedRow(for: rowID).map { [$0] } ?? []
     }
     let rows = selectedWorktreeIDs.compactMap { store.state.selectedRow(for: $0) }
-    return rows.isEmpty ? [row] : rows
+    return rows
   }
 
-  /// A bulk context menu only makes sense for selections whose rows
-  /// are all of the same kind: the per-kind actions (archive, pin,
-  /// branch-name copy, folder disk deletion) don't compose. Mixed
-  /// selections surface no menu at all; the user-facing affordances
-  /// for that state live in the multi-selection detail view.
+  /// Mixed-kind bulk selections surface no menu; per-kind actions don't compose.
   private var hasMixedKindSelection: Bool {
     contextRows.count > 1 && Set(contextRows.map(\.kind)).count > 1
   }
@@ -321,9 +613,6 @@ private struct SidebarItemContextMenu: View {
   }
 
   var body: some View {
-    // A mixed folders + worktrees selection has no composable bulk
-    // action, so we render no menu at all. The multi-selection
-    // detail view explains what remains available per kind.
     if hasMixedKindSelection {
       EmptyView()
     } else {
@@ -337,7 +626,7 @@ private struct SidebarItemContextMenu: View {
 
   @ViewBuilder
   private func menuContents(
-    contextRows: [SidebarItemModel],
+    contextRows: [SidebarItemFeature.State],
     isBulkSelection: Bool,
     overrides: [AppShortcutID: AppShortcutOverride]
   ) -> some View {
@@ -350,18 +639,24 @@ private struct SidebarItemContextMenu: View {
       Divider()
     }
 
-    let pinnableRows = contextRows.filter { !$0.isMainWorktree }
+    // Folder synthetic rows pass `isMainWorktree` by geometry but are
+    // pinnable; git "main" rows still aren't.
+    let pinnableRows = contextRows.filter { !$0.isMainWorktree || $0.isFolder }
     if !pinnableRows.isEmpty {
       let allPinned = pinnableRows.allSatisfy(\.isPinned)
+      let allFolders = pinnableRows.allSatisfy(\.isFolder)
+      // Folder-only selection reads "Pin Folder" / "Pin Folders"; mixed or
+      // git-only fall back to "Worktree" so the label stays accurate.
+      let noun = allFolders ? "Folder" : "Worktree"
       if allPinned {
-        let label = isBulkSelection ? "Unpin Worktrees" : "Unpin Worktree"
+        let label = isBulkSelection ? "Unpin \(noun)s" : "Unpin \(noun)"
         Button(label, systemImage: "pin.slash") {
           for pinnableRow in pinnableRows {
             togglePin(for: pinnableRow.id, isPinned: true)
           }
         }
       } else {
-        let label = isBulkSelection ? "Pin Worktrees" : "Pin Worktree"
+        let label = isBulkSelection ? "Pin \(noun)s" : "Pin \(noun)"
         Button(label, systemImage: "pin") {
           for pinnableRow in pinnableRows where !pinnableRow.isPinned {
             togglePin(for: pinnableRow.id, isPinned: false)
@@ -376,18 +671,17 @@ private struct SidebarItemContextMenu: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(worktree.workingDirectory.path, forType: .string)
       }
-      if !row.isFolder {
+      if !rowIsFolder {
         Button("Copy as Branch Name") {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(worktree.name, forType: .string)
         }
       }
       Divider()
-      if row.isFolder {
-        // Folder rows have no section-header ellipsis menu, so the
-        // Settings entry lives alongside Delete in the context menu.
+      if rowIsFolder {
+        // Folder rows have no section ellipsis menu, so Settings lives here.
         Button("Folder Settings…", systemImage: "gear") {
-          store.send(.openRepositorySettings(row.repositoryID))
+          store.send(.openRepositorySettings(repositoryID))
         }
         .help("Open folder settings")
         Divider()
@@ -396,7 +690,7 @@ private struct SidebarItemContextMenu: View {
 
     let archiveTargets =
       contextRows
-      .filter { !$0.isMainWorktree && !$0.isLoading }
+      .filter { !$0.isMainWorktree && $0.lifecycle == .idle }
       .map {
         RepositoriesFeature.ArchiveWorktreeTarget(
           worktreeID: $0.id,
@@ -425,7 +719,7 @@ private struct SidebarItemContextMenu: View {
       let deleteLabel =
         isBulkSelection
         ? (isAllFoldersBulk ? "Remove Folders…" : "Delete Worktrees…")
-        : (row.isFolder ? "Remove Folder…" : "Delete Worktree…")
+        : (rowIsFolder ? "Remove Folder…" : "Delete Worktree…")
       Button(deleteLabel, systemImage: "trash", role: .destructive) {
         store.send(.requestDeleteSidebarItems(deleteTargets))
       }

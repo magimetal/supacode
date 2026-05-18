@@ -22,7 +22,7 @@ struct ToolbarNotificationGroupingTests {
     let repoA = makeRepository(id: repoAPath, name: "Repo A", worktrees: [repoAMain, repoAOne, repoATwo])
     let repoB = makeRepository(id: repoBPath, name: "Repo B", worktrees: [repoBMain, repoBOne])
 
-    var state = RepositoriesFeature.State(repositories: [repoA, repoB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
     state.$sidebar.withLock { sidebar in
       sidebar.sections[repoB.id] = .init()
@@ -38,22 +38,27 @@ struct ToolbarNotificationGroupingTests {
       )
     }
 
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    manager.state(for: repoAOne).notifications = [
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "A1", body: "done", createdAt: .distantPast, isRead: true
-      )
-    ]
-    manager.state(for: repoATwo).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "A2", body: "done", createdAt: .distantPast)
-    ]
-    manager.state(for: repoBOne).notifications = [
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "B1", body: "done", createdAt: .distantPast, isRead: true
-      )
-    ]
+    setRowNotifications(
+      &state, id: repoAOne.id,
+      notifications: [
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "A1", body: "done", createdAt: .distantPast, isRead: true
+        )
+      ])
+    setRowNotifications(
+      &state, id: repoATwo.id,
+      notifications: [
+        WorktreeTerminalNotification(surfaceID: UUID(), title: "A2", body: "done", createdAt: .distantPast)
+      ])
+    setRowNotifications(
+      &state, id: repoBOne.id,
+      notifications: [
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "B1", body: "done", createdAt: .distantPast, isRead: true
+        )
+      ])
 
-    let groups = state.toolbarNotificationGroups(terminalManager: manager)
+    let groups = state.computeToolbarNotificationGroups()
 
     #expect(groups.map(\.id) == [repoB.id, repoA.id])
     #expect(groups[0].worktrees.map(\.id) == [repoBOne.id])
@@ -73,7 +78,7 @@ struct ToolbarNotificationGroupingTests {
     let repoA = makeRepository(id: repoAPath, name: "Repo A", worktrees: [repoAMain, repoAArchived])
     let repoB = makeRepository(id: repoBPath, name: "Repo B", worktrees: [repoBMain, repoBEmpty])
 
-    var state = RepositoriesFeature.State(repositories: [repoA, repoB])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repoA, repoB])
     state.repositoryRoots = [repoA.rootURL, repoB.rootURL]
     state.$sidebar.withLock { sidebar in
       sidebar.insert(
@@ -84,12 +89,13 @@ struct ToolbarNotificationGroupingTests {
       )
     }
 
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    manager.state(for: repoAArchived).notifications = [
-      WorktreeTerminalNotification(surfaceId: UUID(), title: "Archived", body: "hidden", createdAt: .distantPast)
-    ]
+    setRowNotifications(
+      &state, id: repoAArchived.id,
+      notifications: [
+        WorktreeTerminalNotification(surfaceID: UUID(), title: "Archived", body: "hidden", createdAt: .distantPast)
+      ])
 
-    let groups = state.toolbarNotificationGroups(terminalManager: manager)
+    let groups = state.computeToolbarNotificationGroups()
 
     #expect(groups.isEmpty)
   }
@@ -101,25 +107,28 @@ struct ToolbarNotificationGroupingTests {
     let mixed = makeWorktree(id: "\(repoPath)/mixed", name: "mixed", repoRoot: repoPath)
 
     let repo = makeRepository(id: repoPath, name: "Repo", worktrees: [main, readOnly, mixed])
-    var state = RepositoriesFeature.State(repositories: [repo])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
     state.repositoryRoots = [repo.rootURL]
 
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    manager.state(for: readOnly).notifications = [
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "Read 1", body: "done", createdAt: .distantPast, isRead: true
-      )
-    ]
-    manager.state(for: mixed).notifications = [
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "Read 2", body: "done", createdAt: .distantPast, isRead: true
-      ),
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "Unread", body: "new", createdAt: .distantPast, isRead: false
-      ),
-    ]
+    setRowNotifications(
+      &state, id: readOnly.id,
+      notifications: [
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "Read 1", body: "done", createdAt: .distantPast, isRead: true
+        )
+      ])
+    setRowNotifications(
+      &state, id: mixed.id,
+      notifications: [
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "Read 2", body: "done", createdAt: .distantPast, isRead: true
+        ),
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "Unread", body: "new", createdAt: .distantPast, isRead: false
+        ),
+      ])
 
-    let groups = state.toolbarNotificationGroups(terminalManager: manager)
+    let groups = state.computeToolbarNotificationGroups()
 
     #expect(groups.count == 1)
     #expect(groups[0].notificationCount == 3)
@@ -132,21 +141,32 @@ struct ToolbarNotificationGroupingTests {
     let feature = makeWorktree(id: "\(repoPath)/feature", name: "feature", repoRoot: repoPath)
 
     let repo = makeRepository(id: repoPath, name: "Repo", worktrees: [main, feature])
-    var state = RepositoriesFeature.State(repositories: [repo])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repo])
     state.repositoryRoots = [repo.rootURL]
 
-    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    manager.state(for: feature).notifications = [
-      WorktreeTerminalNotification(
-        surfaceId: UUID(), title: "Read", body: "kept", createdAt: .distantPast, isRead: true
-      )
-    ]
+    setRowNotifications(
+      &state, id: feature.id,
+      notifications: [
+        WorktreeTerminalNotification(
+          surfaceID: UUID(), title: "Read", body: "kept", createdAt: .distantPast, isRead: true
+        )
+      ])
 
-    let groups = state.toolbarNotificationGroups(terminalManager: manager)
+    let groups = state.computeToolbarNotificationGroups()
 
     #expect(groups.map(\.id) == [repo.id])
     #expect(groups[0].worktrees.map(\.id) == [feature.id])
     #expect(groups[0].unseenWorktreeCount == 0)
+  }
+
+  private func setRowNotifications(
+    _ state: inout RepositoriesFeature.State,
+    id: SidebarItemID,
+    notifications: [WorktreeTerminalNotification]
+  ) {
+    let hasUnseen = notifications.contains(where: { !$0.isRead })
+    state.sidebarItems[id: id]?.notifications = IdentifiedArrayOf(uniqueElements: notifications)
+    state.sidebarItems[id: id]?.hasUnseenNotifications = hasUnseen
   }
 
   private func makeWorktree(
